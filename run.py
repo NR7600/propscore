@@ -44,6 +44,11 @@ def parse_args() -> argparse.Namespace:
         help="Do not call The Odds API (still uses a same-day cache if one exists).",
     )
     parser.add_argument("--workers", type=int, default=6, help="Parallel gamelog fetches.")
+    parser.add_argument(
+        "--skip-pbp",
+        action="store_true",
+        help="Do not fetch new ESPN play-by-play; reuse the compact first-score cache only.",
+    )
     return parser.parse_args()
 
 
@@ -128,6 +133,27 @@ def main() -> int:
     attach_defense(rows, defense)
     attach_without_splits(rows, players, logs, slate_date=date)
     game_payloads = games_with_context(games, players)
+    from propscore.first_score import build_first_score_rows
+
+    print("Building first-basket / first-goal trends from ESPN play-by-play...")
+    first_score_rows, first_score_meta, first_score_flags = build_first_score_rows(
+        sport=sport.key,
+        slate_date=date,
+        games=games,
+        players=players,
+        logs=logs,
+        client=client,
+        cache_root=CACHE_DIR,
+        skip_fetch=args.skip_pbp,
+    )
+    print(
+        f"  First-score: {first_score_meta.get('events_used', 0)} games used "
+        f"(cached {first_score_meta.get('events_cached', 0)}, "
+        f"fetched {first_score_meta.get('events_fetched', 0)}, "
+        f"missing {first_score_meta.get('events_missing', 0)}, "
+        f"{len(first_score_rows)} ranked players)."
+    )
+
     qualified = {r.player_id for r in rows}
     print(f"Ranked {len(rows)} prop lines across {len(qualified)} players.")
     live_rows = sum(1 for r in rows if getattr(r, "line_source", "") == "live")
@@ -165,8 +191,15 @@ def main() -> int:
             "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/teams/{id}/roster",
             "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/injuries",
             "https://site.web.api.espn.com/apis/common/v3/sports/hockey/nhl/athletes/{id}/gamelog",
+            "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/summary?event={id}",
             "https://api.the-odds-api.com/v4/sports/icehockey_nhl/events (free); /events/{id}/odds (credits)",
         ]
+        notes.append(
+            "First Goal trends come from ESPN play-by-play (summary plays) for each "
+            "team's completed games this season: who scored that team's first goal, "
+            "hit rate in L5/L10/L20/season, streak, and opening-faceoff win rate. "
+            "Compact extracts are cached on disk and only new games are fetched."
+        )
     else:
         notes.append(
             "Data from ESPN public JSON (scoreboard, rosters, injuries, player gamelogs). "
@@ -189,8 +222,16 @@ def main() -> int:
             "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/{id}/roster",
             "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries",
             "https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/athletes/{id}/gamelog",
+            "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event={id}",
             "https://api.the-odds-api.com/v4/sports/basketball_nba/events (free); /events/{id}/odds (credits)",
         ]
+        notes.append(
+            "First Basket trends come from ESPN play-by-play (summary plays) for each "
+            "team's completed games this season: who scored that team's first basket, "
+            "hit rate in L5/L10/L20/season, streak, whether the player started, and "
+            "the team's opening-tip win rate. Compact extracts are cached on disk "
+            "and only new games are fetched."
+        )
     if failed:
         notes.append(f"Game logs failed for {len(failed)} player(s).")
         print("Failed logs:")
@@ -209,6 +250,9 @@ def main() -> int:
         logs=logs,
         rows=rows,
         notes=notes,
+        first_score_rows=first_score_rows,
+        first_score_meta=first_score_meta,
+        first_score_flags=first_score_flags,
     )
     write_csv(stem.with_suffix(".csv"), rows)
     write_html(
@@ -224,10 +268,14 @@ def main() -> int:
     )
 
     print()
-    print("Top 10 by trend score:")
-    print(f"{'#':<4}{'Player':<24}{'Prop':<22}{'L10':>6}{'Strk':>6}{'Score':>8}")
-    for i, r in enumerate(rows[:10], start=1):
-        print(f"{i:<4}{r.player:<24}{r.line_label:<22}{r.l10*100:5.0f}%{r.streak:6d}{r.score:8.1f}")
+    print("Top 10 first-score trends:")
+    print(f"{'#':<4}{'Player':<24}{'Line':<16}{'Season':>10}{'L10':>8}{'Strk':>6}{'Score':>8}")
+    for i, r in enumerate(first_score_rows[:10], start=1):
+        season = f"{r['season_hits']}/{r['season_games']}"
+        print(
+            f"{i:<4}{r['player']:<24}{r['line_label']:<16}{season:>10}"
+            f"{r['l10']*100:7.0f}%{r['streak']:6d}{r['score']:8.1f}"
+        )
 
     print()
     print("Wrote:")

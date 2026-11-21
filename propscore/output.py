@@ -12,6 +12,14 @@ from .sports.base import Game, GameLog, Player
 TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "templates" / "board.html"
 
 
+
+def _stamp_log(log: dict, flags: dict | None) -> dict:
+    eid = str(log.get("event_id") or "")
+    if flags and eid in flags:
+        log["first_score"] = int(flags[eid])
+    return log
+
+
 def write_json(
     path: Path,
     *,
@@ -24,6 +32,9 @@ def write_json(
     logs: dict[str, list[GameLog]],
     rows: list[PropRow],
     notes: list[str],
+    first_score_rows: list[dict] | None = None,
+    first_score_meta: dict | None = None,
+    first_score_flags: dict | None = None,
 ) -> None:
     payload = {
         "sport": sport,
@@ -48,12 +59,17 @@ def write_json(
         "players": {
             p.id: {
                 **p.to_dict(),
-                "logs": [log.to_dict() for log in logs.get(p.id, [])],
+                "logs": [
+                    _stamp_log(log.to_dict(), (first_score_flags or {}).get(p.id, {}))
+                    for log in logs.get(p.id, [])
+                ],
             }
             for p in players
-            if p.id in {r.player_id for r in rows}
+            if str(p.id) in {str(r.player_id) for r in rows} | {str(r.get("player_id")) for r in (first_score_rows or [])}
         },
         "rows": [r.to_dict() for r in rows],
+        "first_score_rows": list(first_score_rows or []),
+        "first_score_meta": first_score_meta or {},
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")

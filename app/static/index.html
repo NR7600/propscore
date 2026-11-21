@@ -33,9 +33,10 @@
 
     <section id="board-view">
       <div class="trend-tabs" role="tablist" aria-label="Over or under">
-        <button type="button" class="trend-tab" data-side="" role="tab">All Trends</button>
-        <button type="button" class="trend-tab on" data-side="over" role="tab">Over Trends</button>
-        <button type="button" class="trend-tab" data-side="under" role="tab">Under Trends</button>
+        <button type="button" class="trend-tab" data-side="" data-tab="all" role="tab">All Trends</button>
+        <button type="button" class="trend-tab on" data-side="over" data-tab="over" role="tab">Over Trends</button>
+        <button type="button" class="trend-tab" data-side="under" data-tab="under" role="tab">Under Trends</button>
+        <button type="button" class="trend-tab" data-side="" data-tab="first" role="tab" id="first-tab">First Basket</button>
       </div>
 
       <div class="games" id="games" role="list" aria-label="Tonight’s games"></div>
@@ -83,9 +84,21 @@
       </div>
 
       <p class="count" id="count"></p>
-      <div id="list" class="list"></div>
+      <section id="top-wrap" hidden>
+        <h2 class="section-title" id="top-title">Top 10 Trends</h2>
+        <div id="top-list" class="list top-list"></div>
+      </section>
+      <div class="pager top-pager">
+        <button id="show-more-trends" class="more" type="button" hidden>Show more trends</button>
+      </div>
+      <section id="more-block" hidden>
+        <h2 class="section-title" id="more-title">More trends</h2>
+        <div id="list" class="list"></div>
+        <div class="pager">
+          <button id="more" class="more" hidden>Load more</button>
+        </div>
+      </section>
       <div class="pager">
-        <button id="more" class="more" hidden>Load more</button>
         <p class="empty" id="empty" hidden>No props match these filters.</p>
         <p class="status" id="status"></p>
       </div>

@@ -83,6 +83,13 @@ ROW_FIELDS = (
     "opp_def_stat",
     "matchup_tag",
     "without",
+    "tip_win_rate",
+    "tip_wins",
+    "tip_games",
+    "started_rate",
+    "started_games",
+    "started_last",
+    "first_kind",
 )
 
 
@@ -171,53 +178,71 @@ class BoardStore:
         perfect: bool = False,
         sort: str = "score",
         min_odds: int | None = None,
+        tab: str = "",
         page: int = 1,
         page_size: int = 25,
     ) -> dict[str, Any]:
         data = self.get(sport, date)
+        first_mode = _is_first_tab(tab, stat)
+        source = (data.get("first_score_rows") or []) if first_mode else (data.get("rows") or [])
         rows = _filter_rows(
-            data.get("rows") or [],
+            source,
             sport=sport,
-            stat=stat,
+            stat="" if first_mode else stat,
             game=game,
-            min_l10=min_l10,
+            min_l10=0.0 if first_mode else min_l10,
             hide_out=hide_out,
-            hide_gimme=hide_gimme,
-            view=view,
+            hide_gimme=False if first_mode else hide_gimme,
+            view="all" if first_mode else view,
             q=q,
-            side=side,
+            side="" if first_mode else side,
             perfect=perfect,
             sort=sort,
-            min_odds=min_odds,
+            min_odds=None if first_mode else min_odds,
         )
+        top = _top10(rows, first_mode=first_mode)
+        top_ids = {_row_id(r) for r in top}
+        more = [r for r in rows if _row_id(r) not in top_ids]
         page = max(1, page)
         page_size = min(max(1, page_size), 50)
-        total = len(rows)
+        total = len(more)
         total_pages = max(1, (total + page_size - 1) // page_size) if total else 1
         if page > total_pages:
             page = total_pages
         start = (page - 1) * page_size
-        slice_ = [_compact_row(r) for r in rows[start : start + page_size]]
+        slice_ = [_compact_row(r) for r in more[start : start + page_size]]
+        top_out = []
+        for i, r in enumerate(top):
+            item = _compact_row(r)
+            item["rank"] = i + 1
+            top_out.append(item)
         return {
             "sport": data.get("sport", sport),
             "date": data.get("date", date),
             "timezone": data.get("timezone", "America/New_York"),
             "generated_at": data.get("generated_at"),
             "stale": data.get("date") != today_et(),
-            "view": "value" if view == "value" else "all",
-            "view_label": _view_label(view, min_l10),
+            "view": "first_score" if first_mode else ("value" if view == "value" else "all"),
+            "view_label": (
+                "Ranked 1-10 by first-score trend strength (L5/L10/L20/season, "
+                "streak, home/away). Rates are first basket or first goal for "
+                "that player's team."
+                if first_mode
+                else _view_label(view, min_l10)
+            ),
             "games": data.get("games") or [],
             "filters": {
                 "stat": stat or "",
                 "game": game or "",
-                "min_l10": min_l10,
+                "min_l10": 0.0 if first_mode else min_l10,
                 "hide_out": hide_out,
-                "hide_gimme": hide_gimme,
+                "hide_gimme": False if first_mode else hide_gimme,
                 "q": q or "",
-                "side": side or "",
+                "side": "" if first_mode else (side or ""),
                 "perfect": perfect,
                 "sort": sort or "score",
-                "min_odds": min_odds,
+                "min_odds": None if first_mode else min_odds,
+                "tab": "first_score" if first_mode else (side or "all"),
             },
             "page": page,
             "page_size": page_size,
@@ -225,7 +250,11 @@ class BoardStore:
             "total_pages": total_pages,
             "has_more": page < total_pages,
             "props": props_for_sport(sport),
+            "top": top_out,
+            "top_count": len(top_out),
             "rows": slice_,
+            "first_score_meta": data.get("first_score_meta") or {},
+            "first_mode": first_mode,
         }
 
     def player(self, sport: str, date: str, player_id: str) -> dict[str, Any] | None:
@@ -240,11 +269,23 @@ class BoardStore:
             for r in (data.get("rows") or [])
             if str(r.get("player_id")) == str(player_id)
         ]
+        first_rows = [
+            _compact_row(r)
+            for r in (data.get("first_score_rows") or [])
+            if str(r.get("player_id")) == str(player_id)
+        ]
+        rows.extend(first_rows)
         # Prefer a score-sorted list so the detail page can pick a default line.
-        rows.sort(key=lambda r: (-(r.get("score") or 0), -(r.get("l10") or 0)))
+        rows.sort(key=lambda r: (
+            -(1 if r.get("line_source") == "live" else 0),
+            -(r.get("score") or 0),
+            -(r.get("l10") or 0),
+        ))
+        featured, more = _player_featured(rows)
         game = None
-        if rows:
-            event_id = rows[0].get("event_id")
+        source = featured or more or rows
+        if source:
+            event_id = source[0].get("event_id")
             game = next((g for g in (data.get("games") or []) if g.get("event_id") == event_id), None)
         logs = list(player.get("logs") or [])
         # Newest first already; cap to 20 for the chart.
@@ -254,7 +295,8 @@ class BoardStore:
             "player": {k: v for k, v in player.items() if k != "logs"},
             "game": game,
             "logs": logs[:20],
-            "rows": rows,
+            "rows": featured,
+            "more_rows": more,
         }
 
 
@@ -395,6 +437,76 @@ def _best_value(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _compact_row(row: dict[str, Any]) -> dict[str, Any]:
     return {k: row.get(k) for k in ROW_FIELDS}
+
+
+
+def _is_first_tab(tab: str, stat: str) -> bool:
+    token = (tab or stat or "").strip().lower()
+    return token in {"first", "first_score", "first_basket", "first_goal"}
+
+
+def _row_id(row: dict[str, Any]) -> tuple:
+    return (
+        str(row.get("player_id")),
+        str(row.get("prop") or ""),
+        str(row.get("side") or "over"),
+        str(row.get("line") or ""),
+    )
+
+
+def _trend_key(row: dict[str, Any], first_mode: bool = False) -> tuple:
+    live = 1 if row.get("line_source") == "live" else 0
+    if first_mode:
+        live = 0
+    return (
+        live,
+        float(row.get("score") or 0),
+        float(row.get("l10") or 0),
+        int(row.get("streak") or 0),
+        float(row.get("l5") or 0),
+        float(row.get("season") or 0),
+    )
+
+
+def _top10(rows: list[dict[str, Any]], first_mode: bool = False) -> list[dict[str, Any]]:
+    """One strongest trend per player, live lines preferred, capped at 10."""
+    best: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        pid = str(r.get("player_id") or "")
+        if not pid:
+            continue
+        prev = best.get(pid)
+        if prev is None or _trend_key(r, first_mode) > _trend_key(prev, first_mode):
+            best[pid] = r
+    ranked = sorted(best.values(), key=lambda r: _trend_key(r, first_mode), reverse=True)
+    return ranked[:10]
+
+
+FEATURED_CAP = 6
+
+
+def _player_featured(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Max one line per stat type, about 4-6 total; extras go behind More lines."""
+    best: dict[str, dict[str, Any]] = {}
+    extras: list[dict[str, Any]] = []
+    for r in rows:
+        prop = str(r.get("prop") or "")
+        prev = best.get(prop)
+        if prev is None:
+            best[prop] = r
+            continue
+        if _trend_key(r) > _trend_key(prev):
+            extras.append(prev)
+            best[prop] = r
+        else:
+            extras.append(r)
+    featured = sorted(best.values(), key=_trend_key, reverse=True)
+    if len(featured) > FEATURED_CAP:
+        extras = featured[FEATURED_CAP:] + extras
+        featured = featured[:FEATURED_CAP]
+    extras.sort(key=_trend_key, reverse=True)
+    return featured, extras
+
 
 
 STORE = BoardStore()

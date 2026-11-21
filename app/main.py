@@ -43,7 +43,7 @@ log = logging.getLogger("propscore")
 _refresh_lock = threading.Lock()
 _refresh_state: dict = {"running": False, "last": None, "error": None}
 
-app = FastAPI(title="Da Real Big Homie Props", version="1.3.0", docs_url="/api/docs", redoc_url=None)
+app = FastAPI(title="Da Real Big Homie Props", version="1.4.0", docs_url="/api/docs", redoc_url=None)
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
 
@@ -80,7 +80,7 @@ def health():
         "nba_dates": available_dates("nba"),
         "nhl_dates": available_dates("nhl"),
         "refresh": _refresh_state,
-        "features": "odds-v1",
+        "features": "top10-v1",
         "app": "Da Real Big Homie Props",
         "odds": odds_status(),
     }
@@ -113,6 +113,7 @@ def board(
     perfect: bool = False,
     sort: str = Query("score", pattern="^(score|streak)$"),
     min_odds: Optional[int] = Query(None, ge=-500, le=500),
+    tab: str = Query("", max_length=32),
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=50),
 ):
@@ -132,6 +133,7 @@ def board(
         perfect=perfect,
         sort=sort,
         min_odds=min_odds,
+        tab=tab,
         page=page,
         page_size=page_size,
     )
@@ -176,12 +178,19 @@ def refresh(
     return {"ok": True, "status": "started", "sports": sports, "date": date or today_et()}
 
 
-def _run_one_sport(sport: str, date: Optional[str], skip_odds: bool = False) -> None:
+def _run_one_sport(
+    sport: str,
+    date: Optional[str],
+    skip_odds: bool = False,
+    skip_pbp: bool = False,
+) -> None:
     cmd = [sys.executable, str(ROOT / "run.py"), sport]
     if date:
         cmd.extend(["--date", date])
     if skip_odds:
         cmd.append("--skip-odds")
+    if skip_pbp:
+        cmd.append("--skip-pbp")
     log.info("Refreshing board: %s", " ".join(cmd))
     proc = subprocess.run(
         cmd,
@@ -195,7 +204,12 @@ def _run_one_sport(sport: str, date: Optional[str], skip_odds: bool = False) -> 
         raise RuntimeError(proc.stderr[-2000:] or proc.stdout[-2000:] or f"exit {proc.returncode}")
 
 
-def _run_refresh_sports(sports: list[str], date: Optional[str], skip_odds: bool = False) -> None:
+def _run_refresh_sports(
+    sports: list[str],
+    date: Optional[str],
+    skip_odds: bool = False,
+    skip_pbp: bool = False,
+) -> None:
     if not _refresh_lock.acquire(blocking=False):
         return
     _refresh_state["running"] = True
@@ -203,7 +217,7 @@ def _run_refresh_sports(sports: list[str], date: Optional[str], skip_odds: bool 
     started = datetime.now(ET)
     try:
         for sport in sports:
-            _run_one_sport(sport, date, skip_odds=skip_odds)
+            _run_one_sport(sport, date, skip_odds=skip_odds, skip_pbp=skip_pbp)
         _refresh_state["last"] = datetime.now(ET).strftime("%Y-%m-%d %I:%M %p ET")
         log.info("Refresh finished in %ss", int((datetime.now(ET) - started).total_seconds()))
     except Exception as exc:
@@ -245,8 +259,14 @@ def on_startup() -> None:
         on_render = bool(os.environ.get("RENDER"))
         fetch_on_boot = os.environ.get("ODDS_FETCH_ON_BOOT", "").strip().lower() in {"1", "true", "yes"}
         skip_odds = on_render and not fetch_on_boot
+        # Play-by-play summaries are large; skip them on Render boot so the
+        # free-tier cold start stays short. POST /api/refresh and the 10 AM
+        # ET job still fetch new games incrementally.
+        skip_pbp = on_render
         threading.Thread(
-            target=_run_refresh_sports, args=(missing, None, skip_odds), daemon=True
+            target=_run_refresh_sports,
+            args=(missing, None, skip_odds, skip_pbp),
+            daemon=True,
         ).start()
 
 

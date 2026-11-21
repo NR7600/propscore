@@ -5,6 +5,11 @@
     sport: "nba",
     date: null,
     side: "over",
+    tab: "over",
+    moreOpen: false,
+    top: [],
+    moreRows: [],
+    showMoreLines: false,
     stat: "",
     game: "",
     q: "",
@@ -120,8 +125,12 @@
     if (state.stat) p.set("stat", state.stat);
     if (state.game) p.set("game", state.game);
     if (state.q) p.set("q", state.q);
-    if (state.side) p.set("side", state.side);
-    p.set("min_l10", String(state.minL10));
+    if (state.tab === "first") {
+      p.set("tab", "first_score");
+    } else if (state.side) {
+      p.set("side", state.side);
+    }
+    p.set("min_l10", String(state.tab === "first" ? 0 : state.minL10));
     p.set("hide_out", state.hideOut ? "true" : "false");
     p.set("hide_gimme", state.hideGimme ? "true" : "false");
     p.set("view", state.viewValue ? "value" : "all");
@@ -139,6 +148,9 @@
       $("count").textContent = "";
       $("empty").hidden = true;
       $("more").hidden = true;
+      $("top-wrap").hidden = true;
+      $("show-more-trends").hidden = true;
+      $("more-block").hidden = true;
       return;
     }
     if (!append) {
@@ -156,19 +168,40 @@
       state.totalPages = data.total_pages;
       state.games = data.games || [];
       state.props = data.props || state.props;
+      if (!append) {
+        state.top = data.top || [];
+        state.moreOpen = false;
+      }
       if (append) state.rows = state.rows.concat(data.rows || []);
       else state.rows = data.rows || [];
+      const first = !!data.first_mode;
+      const firstLabel = state.sport === "nhl" ? "First Goal" : "First Basket";
+      const firstTab = $("first-tab");
+      if (firstTab) firstTab.textContent = firstLabel;
+      $("board-view").classList.toggle("first-mode", first);
       $("date-line").textContent = data.stale
         ? `Showing ${data.date} • Ranked by trend strength`
         : `Updated ${data.date} • Ranked by trend strength`;
       $("view-note").textContent = data.view_label || "";
+      const topTitle = first ? `Top 10 ${firstLabel}` : "Top 10 Trends";
+      $("top-title").textContent = topTitle;
+      $("more-title").textContent = first ? `More ${firstLabel.toLowerCase()} trends` : "More trends";
       renderGames();
       renderStatPills();
+      renderTop();
       renderList(append);
-      $("count").textContent = `${data.total} trends`;
-      $("empty").hidden = data.total > 0;
-      $("more").hidden = !data.has_more;
-      $("gimme-wrap").hidden = !(state.viewValue === false && state.minL10 < 0.99);
+      const moreCount = data.total || 0;
+      const topCount = (state.top || []).length;
+      $("count").textContent = topCount
+        ? `Top ${topCount}${moreCount ? ` · ${moreCount} more` : ""}`
+        : `${moreCount} trends`;
+      $("empty").hidden = topCount > 0 || moreCount > 0;
+      $("top-wrap").hidden = topCount === 0;
+      $("show-more-trends").hidden = moreCount === 0 || state.moreOpen;
+      $("show-more-trends").textContent = `Show more trends (${moreCount})`;
+      if (!append) $("more-block").hidden = !state.moreOpen;
+      $("more").hidden = !state.moreOpen || !data.has_more;
+      $("gimme-wrap").hidden = first || !(state.viewValue === false && state.minL10 < 0.99);
       $("status").textContent = "";
     } catch (err) {
       $("status").textContent = err.message || "Could not load the board.";
@@ -205,13 +238,21 @@
     const start = append ? host.children.length : 0;
     const html = state.rows
       .slice(start)
-      .map((row, i) => cardHTML(row, start + i + 1))
+      .map((row, i) => cardHTML(row, start + i + 11, false))
       .join("");
     if (append) host.insertAdjacentHTML("beforeend", html);
     else host.innerHTML = html;
   }
 
-  function cardHTML(row, rank) {
+  function renderTop() {
+    const host = $("top-list");
+    host.innerHTML = (state.top || [])
+      .map((row, i) => cardHTML(row, row.rank || i + 1, true))
+      .join("");
+  }
+
+  function cardHTML(row, rank, featured) {
+    const first = row.prop === "first_basket" || row.prop === "first_goal" || row.first_kind;
     const over = (row.side || "over") === "over";
     const windows = [
       [row.l5_hits, row.l5_games, row.l5],
@@ -238,17 +279,28 @@
       const w = row.without[0];
       chips.push(`W/O ${w.player.split(" ").slice(-1)[0]} ${pct(w.rate)}%`);
     }
+    if (first) {
+      if (row.season_games) chips.unshift(`${frac(row.season_hits, row.season_games)} games (${pct(row.season)}%)`);
+      if (row.started_last) chips.push("Starter last game");
+      else if (row.started_games) chips.push(`Started ${frac(row.started_games, row.games_played || row.season_games)}`);
+      if (row.tip_games) {
+        const tipName = row.prop === "first_goal" ? "FO win" : "Tip win";
+        chips.push(`Team ${tipName} ${frac(row.tip_wins, row.tip_games)} ${pct(row.tip_win_rate)}%`);
+      }
+    }
     const inSlip = loadSlip().some((l) => l.id === slipId(row));
-    return `<article class="card" data-player="${row.player_id}" data-prop="${row.prop}" data-side="${row.side}" data-line="${row.line}">
+    const sideCls = first ? "first" : (over ? "" : "under");
+    const sideTxt = first ? (row.prop_label || "1st") : (over ? "Over" : "Under");
+    return `<article class="card ${featured ? "top-card" : ""}" data-player="${row.player_id}" data-prop="${row.prop}" data-side="${row.side}" data-line="${row.line}">
       <div class="card-top">
         <div class="rank-wrap">
           <div class="rank"><small>RANK</small><b>${rank}</b></div>
           <div class="who">
             <div class="name">${escapeHtml(row.player)}</div>
-            <div class="meta">${escapeHtml(row.game || matchupText(row))}${row.game_time_et ? " · " + escapeHtml(row.game_time_et) : ""}${row.position ? " · " + escapeHtml(row.position) : ""}</div>
+            <div class="meta">${escapeHtml(row.team ? row.team + " · " : "")}${escapeHtml(row.game || matchupText(row))}${row.game_time_et ? " · " + escapeHtml(row.game_time_et) : ""}${row.position ? " · " + escapeHtml(row.position) : ""}</div>
           </div>
         </div>
-        <span class="side ${over ? "" : "under"}">${over ? "Over" : "Under"}</span>
+        <span class="side ${sideCls}">${escapeHtml(sideTxt)}</span>
       </div>
       <div class="market">${escapeHtml(row.line_label)}${row.book_title && row.line_source === "live" ? ` · ${escapeHtml(row.book_title)}` : ""}${row.line_source === "standard" ? `<span class="std-badge">standard</span>` : ""}</div>
       <div class="rates-grid">${windows}</div>
@@ -287,8 +339,9 @@
     try {
       const data = await api(`/api/${state.sport}/player/${playerId}${state.date ? `?date=${state.date}` : ""}`);
       state.player = data;
-      const rows = data.rows || [];
-      let selected = rows[0];
+      state.moreRows = data.more_rows || [];
+      const rows = playerAllRows(data);
+      let selected = (data.rows || [])[0] || rows[0];
       if (hint) {
         selected =
           rows.find(
@@ -300,6 +353,8 @@
           rows.find((r) => r.prop === hint.prop) ||
           selected;
       }
+      const featuredIds = new Set((data.rows || []).map((r) => `${r.prop}:${r.side}:${r.line}`));
+      state.showMoreLines = !!(selected && !featuredIds.has(`${selected.prop}:${selected.side}:${selected.line}`));
       state.selectedKey = selected ? `${selected.prop}:${selected.side}:${selected.line}` : null;
       renderPlayer();
     } catch (err) {
@@ -307,8 +362,13 @@
     }
   }
 
+  function playerAllRows(data) {
+    const src = data || state.player || {};
+    return [...(src.rows || []), ...(src.more_rows || state.moreRows || [])];
+  }
+
   function selectedRow() {
-    const rows = (state.player && state.player.rows) || [];
+    const rows = playerAllRows();
     return rows.find((r) => `${r.prop}:${r.side}:${r.line}` === state.selectedKey) || rows[0];
   }
 
@@ -320,33 +380,46 @@
     const game = data.game || {};
     const next = game.label || row.game || "";
     const at = row.venue === "H" ? "vs" : "@";
+    const first = row.prop === "first_basket" || row.prop === "first_goal" || row.first_kind;
+    const sub = first
+      ? escapeHtml(row.prop_full || row.prop_label)
+      : `${escapeHtml(row.prop_full || row.prop_label)} vs ${escapeHtml(String(row.display_line))} line`;
     $("player-header").innerHTML = `
       <div class="player-head">
         <h1>${escapeHtml(p.name || row.player)}</h1>
-        <p class="sub">${escapeHtml(row.prop_full || row.prop_label)} vs ${escapeHtml(String(row.display_line))} line</p>
+        <p class="sub">${sub}</p>
         <p class="next">Next game: ${escapeHtml(at + " " + (row.opponent || next))}${row.game_time_et ? " · " + escapeHtml(row.game_time_et) : ""}</p>
       </div>`;
-    const rows = data.rows || [];
+    const featured = data.rows || [];
+    const extra = data.more_rows || state.moreRows || [];
+    const visible = state.showMoreLines ? featured.concat(extra) : featured;
     const propOrder = [];
     const seenProp = new Set();
-    for (const r of rows) {
+    for (const r of visible) {
       if (!seenProp.has(r.prop)) { seenProp.add(r.prop); propOrder.push(r.prop); }
     }
     const currentProp = row.prop;
     const propPills = propOrder.map((prop) => {
-      const sample = rows.find((r) => r.prop === prop) || {};
+      const sample = visible.find((r) => r.prop === prop) || {};
       const on = prop === currentProp ? "on" : "";
       return `<button type="button" class="pill ${on}" data-propkey="${prop}">${escapeHtml(sample.prop_label || prop)}</button>`;
     }).join("");
-    const linePills = rows
+    const linePills = visible
       .filter((r) => r.prop === currentProp)
       .map((r) => {
         const key = `${r.prop}:${r.side}:${r.line}`;
         const on = key === state.selectedKey ? "on" : "";
-        return `<button type="button" class="pill ${on}" data-linekey="${key}">${escapeHtml(r.side === "under" ? "Under" : "Over")} ${escapeHtml(String(r.display_line))}</button>`;
+        const firstLine = r.prop === "first_basket" || r.prop === "first_goal";
+        const label = firstLine
+          ? (r.prop_label || "1st")
+          : `${r.side === "under" ? "Under" : "Over"} ${r.display_line}`;
+        return `<button type="button" class="pill ${on}" data-linekey="${key}">${escapeHtml(label)}</button>`;
       })
       .join("");
-    $("player-lines").innerHTML = `<div class="stat-pills wrap">${propPills}</div><div class="stat-pills wrap" style="padding-top:0">${linePills}</div>`;
+    const moreBtn = extra.length
+      ? `<button type="button" class="more-lines-btn" id="toggle-more-lines">${state.showMoreLines ? "Hide extra lines" : `More lines (${extra.length})`}</button>`
+      : "";
+    $("player-lines").innerHTML = `<div class="stat-pills wrap">${propPills}</div><div class="stat-pills wrap" style="padding-top:0">${linePills}</div>${moreBtn}`;
     renderChart(data.logs || [], row);
     $("player-stats").innerHTML = [
       rateBox("L5", row.l5, row.l5_hits, row.l5_games, row.l5_avg),
@@ -364,7 +437,12 @@
     return `<div class="rate-box"><div class="k">${label}</div><div class="v">${games ? pct(rate) + "%" : "—"}</div><div class="s">${extra}</div></div>`;
   }
 
+  function isFirstProp(prop) {
+    return prop === "first_basket" || prop === "first_goal";
+  }
+
   function logValue(log, prop) {
+    if (isFirstProp(prop)) return log.first_score == null ? null : Number(log.first_score);
     if (prop === "pts_reb") return (log.points || 0) + (log.rebounds || 0);
     if (prop === "pts_ast") return (log.points || 0) + (log.assists || 0);
     if (prop === "reb_ast") return (log.rebounds || 0) + (log.assists || 0);
@@ -375,38 +453,44 @@
   }
 
   function isHit(log, row) {
+    if (isFirstProp(row.prop)) return Number(log.first_score) === 1;
     const v = Number(logValue(log, row.prop));
     return row.side === "under" ? v < row.line : v >= row.line;
   }
 
   function renderChart(logs, row) {
-    const recent = (logs || []).slice(0, 10);
+    const first = isFirstProp(row.prop);
+    let recent = (logs || []).slice(0, 10);
+    if (first) recent = (logs || []).filter((g) => g.first_score != null).slice(0, 10);
     if (!recent.length) {
       $("chart-wrap").innerHTML = `<p class="status">No game log yet.</p>`;
       return;
     }
-    const values = recent.map((g) => Number(logValue(g, row.prop)));
-    const max = Math.max(row.display_line || row.line || 1, ...values, 1);
+    const values = recent.map((g) => Number(logValue(g, row.prop) || 0));
+    const max = first ? 1 : Math.max(row.display_line || row.line || 1, ...values, 1);
     const bars = recent
       .map((g, i) => {
         const v = values[i];
         const hit = isHit(g, row);
-        const h = Math.max(12, Math.round((v / max) * 130));
+        const h = first ? (hit ? 130 : 18) : Math.max(12, Math.round((v / max) * 130));
         const date = (g.date || "").slice(5);
         const opp = `${g.venue === "H" || g.is_home ? "vs" : "@"} ${g.opponent_abbr || ""}`;
+        const label = first ? (hit ? "Yes" : "No") : String(v);
         return `<div class="bar-col">
-          <div class="bar ${hit ? "hit" : "miss"}" style="height:${h}px">${v}</div>
+          <div class="bar ${hit ? "hit" : "miss"}" style="height:${h}px">${escapeHtml(label)}</div>
           <div class="bar-lab">${escapeHtml(date)}<br>${escapeHtml(opp)}</div>
         </div>`;
       })
       .join("");
     const line = row.display_line ?? row.line;
+    const legend = first
+      ? `<span><i class="dot hit"></i>${escapeHtml(row.prop_label || "1st")}</span>
+         <span><i class="dot miss"></i>No</span>`
+      : `<span><i class="dot hit"></i>Over ${escapeHtml(String(line))}</span>
+         <span><i class="dot miss"></i>Under ${escapeHtml(String(line))}</span>`;
     $("chart-wrap").innerHTML = `<div class="chart">
       <div class="bars">${bars}</div>
-      <div class="legend">
-        <span><i class="dot hit"></i>Over ${escapeHtml(String(line))}</span>
-        <span><i class="dot miss"></i>Under ${escapeHtml(String(line))}</span>
-      </div>
+      <div class="legend">${legend}</div>
     </div>`;
   }
 
@@ -592,7 +676,9 @@
     });
     document.querySelectorAll(".trend-tab").forEach((btn) => {
       btn.addEventListener("click", () => {
-        state.side = btn.dataset.side || "";
+        const tab = btn.dataset.tab || (btn.dataset.side ? (btn.dataset.side || "all") : "all");
+        state.tab = tab === "first" ? "first" : tab;
+        state.side = tab === "first" ? "" : (btn.dataset.side || "");
         document.querySelectorAll(".trend-tab").forEach((b) => b.classList.toggle("on", b === btn));
         loadBoard();
       });
@@ -658,7 +744,13 @@
       state.page += 1;
       loadBoard({ append: true });
     });
-    $("list").addEventListener("click", (e) => {
+    $("show-more-trends").addEventListener("click", () => {
+      state.moreOpen = true;
+      $("more-block").hidden = false;
+      $("show-more-trends").hidden = true;
+      $("more").hidden = state.page >= state.totalPages;
+    });
+    function onBoardCardClick(e) {
       const add = e.target.closest("[data-slip]");
       if (add) {
         e.preventDefault();
@@ -679,18 +771,25 @@
       if (card && (e.target.closest("[data-open]") || e.target.closest(".card-top, .market, .rates-grid, .streaks"))) {
         openPlayerFromCard(card);
       }
-    });
+    }
+    $("list").addEventListener("click", onBoardCardClick);
+    $("top-list").addEventListener("click", onBoardCardClick);
     $("back").addEventListener("click", () => {
       setHash(state.sport);
       $("player-view").hidden = true;
       $("board-view").hidden = false;
     });
     $("player-lines").addEventListener("click", (e) => {
+      if (e.target.closest("#toggle-more-lines")) {
+        state.showMoreLines = !state.showMoreLines;
+        renderPlayer();
+        return;
+      }
       const propBtn = e.target.closest("[data-propkey]");
       if (propBtn) {
         const prop = propBtn.dataset.propkey;
-        const best = (state.player.rows || []).filter((r) => r.prop === prop)
-          .sort((a, b) => (b.score || 0) - (a.score || 0))[0];
+        const best = playerAllRows().filter((r) => r.prop === prop)
+          .sort((a, b) => ((b.line_source === "live") - (a.line_source === "live")) || (b.score || 0) - (a.score || 0))[0];
         if (!best) return;
         state.selectedKey = `${best.prop}:${best.side}:${best.line}`;
         setHash(state.sport, state.player.player.id, { prop: best.prop, side: best.side, line: best.line });

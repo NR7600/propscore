@@ -2,10 +2,16 @@
 
 A Slipscore-style player prop research app (the code and repo are still named `propscore`). It pulls tonight’s NBA or NHL slate,
 recent game logs, and injury tags, then ranks standard over **and** under
-lines by trend strength. Cards show L5/L10/L20/season/H2H hit rates, home/away
-and game streaks, rest/B2B, and a player page with a hit/miss bar chart, box
-score, both-team injuries, and an on-device slip builder. Use it in the
-browser or install it to a phone’s Home Screen.
+lines by trend strength. Each Over/Under tab leads with a ranked Top 10
+(one best trend per player, live sportsbook lines preferred). An NBA
+First Basket tab (and NHL First Goal) is built from ESPN play-by-play:
+who scored each team’s first basket or goal, X/Y games, streak, starter,
+and opening-tip / opening-faceoff win rate. Compact PBP extracts are
+cached and only new games are fetched. The player page shows that player’s
+best few props (max one line per stat, about 4–6), with extra lines behind
+a toggle, plus a hit/miss bar chart, box score, both-team injuries, and
+an on-device slip builder. Use it in the browser or install it to a
+phone’s Home Screen.
 
 A sourced inventory of Slipscore’s public features is in
 [SLIPSCORE_FEATURES.md](SLIPSCORE_FEATURES.md).
@@ -143,10 +149,11 @@ score = 100 × (
 ```
 run.py                  # python3 run.py nba
 app/main.py             # FastAPI server + PWA
-app/board_store.py      # filters, best-value view, pagination
+app/board_store.py      # Top 10, filters, best-value view, pagination
 app/static/             # mobile SPA, manifest, service worker
 propscore/ranking.py    # shared scoring
 propscore/odds.py       # Odds API lines (budgeted) + standard fallback
+propscore/first_score.py# ESPN PBP first-basket / first-goal cache
 propscore/sports/nba.py # NBA slate, rosters, logs, injuries
 propscore/sports/nhl.py # NHL slate, rosters, logs, injuries
 output/                 # generated boards
