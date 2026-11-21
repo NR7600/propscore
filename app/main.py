@@ -18,12 +18,13 @@ from pathlib import Path
 from typing import Optional
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app.board_store import STORE, available_dates, resolve_date, today_et
+from app.response_cache import json_response
 from propscore.odds import odds_status
 
 ET = ZoneInfo("America/New_York")
@@ -43,7 +44,7 @@ log = logging.getLogger("propscore")
 _refresh_lock = threading.Lock()
 _refresh_state: dict = {"running": False, "last": None, "error": None}
 
-app = FastAPI(title="Da Real Big Homie Props", version="1.6.0", docs_url="/api/docs", redoc_url=None)
+app = FastAPI(title="Da Real Big Homie Props", version="1.7.0", docs_url="/api/docs", redoc_url=None)
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
 
@@ -81,7 +82,7 @@ def health():
         "nhl_dates": available_dates("nhl"),
         "nfl_dates": available_dates("nfl"),
         "refresh": _refresh_state,
-        "features": "nfl-v1",
+        "features": "perf-v1",
         "app": "Da Real Big Homie Props",
         "odds": odds_status(),
     }
@@ -93,14 +94,17 @@ def list_sports():
 
 
 @app.get("/api/{sport}/meta")
-def board_meta(sport: str, date: Optional[str] = None):
+def board_meta(request: Request, sport: str, date: Optional[str] = None):
     sport = _sport_or_404(sport)
     resolved = _board_date(sport, date)
-    return STORE.meta(sport, resolved)
+    token = STORE.token(sport, resolved)
+    key = f"meta:{sport}:{resolved}"
+    return json_response(request, key, token, build=lambda: STORE.meta(sport, resolved))
 
 
 @app.get("/api/{sport}/board")
 def board(
+    request: Request,
     sport: str,
     date: Optional[str] = None,
     stat: str = "",
@@ -120,34 +124,82 @@ def board(
 ):
     sport = _sport_or_404(sport)
     resolved = _board_date(sport, date)
-    return STORE.query_board(
-        sport,
-        resolved,
-        stat=stat,
-        game=game,
-        min_l10=min_l10,
-        hide_out=hide_out,
-        hide_gimme=hide_gimme,
-        view=view,
-        q=q,
-        side=side,
-        perfect=perfect,
-        sort=sort,
-        min_odds=min_odds,
-        tab=tab,
-        page=page,
-        page_size=page_size,
+    token = STORE.token(sport, resolved)
+    key = (
+        f"board:{sport}:{resolved}:{stat}:{game}:{min_l10}:{hide_out}:{hide_gimme}:"
+        f"{view}:{q}:{side}:{perfect}:{sort}:{min_odds}:{tab}:{page}:{page_size}"
+    )
+    return json_response(
+        request,
+        key,
+        token,
+        build=lambda: STORE.query_board(
+            sport,
+            resolved,
+            stat=stat,
+            game=game,
+            min_l10=min_l10,
+            hide_out=hide_out,
+            hide_gimme=hide_gimme,
+            view=view,
+            q=q,
+            side=side,
+            perfect=perfect,
+            sort=sort,
+            min_odds=min_odds,
+            tab=tab,
+            page=page,
+            page_size=page_size,
+        ),
     )
 
 
 @app.get("/api/{sport}/player/{player_id}")
-def player(sport: str, player_id: str, date: Optional[str] = None):
+def player(request: Request, sport: str, player_id: str, date: Optional[str] = None):
     sport = _sport_or_404(sport)
     resolved = _board_date(sport, date)
-    payload = STORE.player(sport, resolved, player_id)
-    if not payload:
-        raise HTTPException(404, "Player not on this slate (or not enough games to rank).")
-    return payload
+    token = STORE.token(sport, resolved)
+    key = f"player:{sport}:{resolved}:{player_id}"
+
+    def build():
+        payload = STORE.player(sport, resolved, player_id)
+        if not payload:
+            raise HTTPException(404, "Player not on this slate (or not enough games to rank).")
+        return payload
+
+    return json_response(request, key, token, build=build)
+
+
+@app.get("/api/{sport}/player/{player_id}/logs")
+def player_logs(request: Request, sport: str, player_id: str, date: Optional[str] = None):
+    sport = _sport_or_404(sport)
+    resolved = _board_date(sport, date)
+    token = STORE.token(sport, resolved)
+    key = f"logs:{sport}:{resolved}:{player_id}"
+
+    def build():
+        payload = STORE.player_logs(sport, resolved, player_id)
+        if not payload:
+            raise HTTPException(404, "Player not on this slate.")
+        return payload
+
+    return json_response(request, key, token, build=build)
+
+
+@app.get("/api/{sport}/game/{event_id}")
+def game_context(request: Request, sport: str, event_id: str, date: Optional[str] = None):
+    sport = _sport_or_404(sport)
+    resolved = _board_date(sport, date)
+    token = STORE.token(sport, resolved)
+    key = f"game:{sport}:{resolved}:{event_id}"
+
+    def build():
+        payload = STORE.game_context(sport, resolved, event_id)
+        if not payload:
+            raise HTTPException(404, "Game not on this slate.")
+        return payload
+
+    return json_response(request, key, token, build=build)
 
 
 def _sports_to_refresh(requested: str) -> list[str]:

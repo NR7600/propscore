@@ -14,8 +14,9 @@ ET = ZoneInfo("America/New_York")
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = ROOT / "output"
 
-# Compact fields sent in list responses so phones never download logs.
-ROW_FIELDS = (
+# Fields a board card actually renders. Player-page extras are added
+# only on /player responses so list endpoints stay small.
+CARD_FIELDS = (
     "player_id",
     "player",
     "team",
@@ -33,7 +34,6 @@ ROW_FIELDS = (
     "side",
     "line_source",
     "american_odds",
-    "book",
     "book_title",
     "l4",
     "l5",
@@ -47,27 +47,41 @@ ROW_FIELDS = (
     "l8_games",
     "l15_hits",
     "l15_games",
-    "season",
-    "h2h",
-    "venue_hit",
-    "home_hit",
-    "away_hit",
-    "streak",
-    "home_streak",
-    "away_streak",
-    "score",
-    "games_played",
-    "avg_minutes",
     "l5_hits",
     "l5_games",
     "l10_hits",
     "l10_games",
     "l20_hits",
     "l20_games",
+    "season",
     "season_hits",
     "season_games",
+    "h2h",
     "h2h_hits",
     "h2h_games",
+    "streak",
+    "home_streak",
+    "away_streak",
+    "score",
+    "games_played",
+    "rest_days",
+    "is_b2b",
+    "injury_status",
+    "position",
+    "matchup_tag",
+    "without",
+    "tip_win_rate",
+    "tip_wins",
+    "tip_games",
+    "started_last",
+    "started_games",
+    "first_kind",
+    "prior_games",
+)
+
+PLAYER_EXTRA_FIELDS = (
+    "home_hit",
+    "away_hit",
     "home_hits",
     "home_games",
     "away_hits",
@@ -79,27 +93,67 @@ ROW_FIELDS = (
     "min_l5",
     "min_l10",
     "minutes_trend",
-    "rest_days",
-    "is_b2b",
-    "injury_status",
+    "avg_minutes",
     "injury_detail",
-    "position",
     "headshot",
     "opp_def_rank",
     "opp_def_teams",
     "opp_def_value",
     "opp_def_label",
     "opp_def_stat",
-    "matchup_tag",
-    "without",
-    "tip_win_rate",
-    "tip_wins",
-    "tip_games",
     "started_rate",
-    "started_games",
-    "started_last",
-    "first_kind",
-    "prior_games",
+    "book",
+)
+
+# Backward-compatible alias.
+ROW_FIELDS = CARD_FIELDS + PLAYER_EXTRA_FIELDS
+
+GAME_CHIP_FIELDS = (
+    "event_id",
+    "label",
+    "start_et",
+    "status",
+    "home_abbr",
+    "away_abbr",
+    "home_id",
+    "away_id",
+)
+
+LOG_FIELDS = (
+    "event_id",
+    "date",
+    "opponent_abbr",
+    "is_home",
+    "venue",
+    "minutes",
+    "points",
+    "rebounds",
+    "assists",
+    "threes",
+    "pra",
+    "steals",
+    "blocked",
+    "fgm",
+    "goals",
+    "shots",
+    "saves",
+    "started",
+    "pass_yds",
+    "pass_td",
+    "completions",
+    "pass_att",
+    "ints",
+    "rush_yds",
+    "rush_att",
+    "rush_td",
+    "receptions",
+    "rec_yds",
+    "rec_td",
+    "targets",
+    "anytime_td",
+    "first_score",
+    "prior_season",
+    "result",
 )
 
 
@@ -159,6 +213,11 @@ class BoardStore:
         self._cache[key] = (mtime, data)
         return data
 
+    def token(self, sport: str, date: str) -> str:
+        path = OUTPUT_DIR / f"{sport}_{date}.json"
+        mtime = path.stat().st_mtime if path.exists() else 0
+        return f"{sport}:{date}:{mtime}"
+
     def meta(self, sport: str, date: str) -> dict[str, Any]:
         data = self.get(sport, date)
         return {
@@ -168,7 +227,7 @@ class BoardStore:
             "generated_at": data.get("generated_at"),
             "stale": bool(data.get("date") and data.get("date") < today_et()),
             "available_dates": available_dates(sport),
-            "games": data.get("games") or [],
+            "games": _slim_games(data.get("games") or []),
             "row_count": len(data.get("rows") or []),
             "player_count": len(data.get("players") or {}),
             "formula": (data.get("formula") or {}).get("description"),
@@ -241,7 +300,7 @@ class BoardStore:
                 if first_mode
                 else _view_label(view, min_l10)
             ),
-            "games": data.get("games") or [],
+            "games": _slim_games(data.get("games") or []),
             "filters": {
                 "stat": stat or "",
                 "game": game or "",
@@ -278,12 +337,12 @@ class BoardStore:
             # the players map for some reason.
             return None
         rows = [
-            _compact_row(r)
+            _compact_row(r, detail=True)
             for r in (data.get("rows") or [])
             if str(r.get("player_id")) == str(player_id)
         ]
         first_rows = [
-            _compact_row(r)
+            _compact_row(r, detail=True)
             for r in (data.get("first_score_rows") or [])
             if str(r.get("player_id")) == str(player_id)
         ]
@@ -295,22 +354,68 @@ class BoardStore:
             -(r.get("streak") or 0),
         ))
         featured, more = _player_featured(rows)
+        featured = [_compact_row(r, detail=True) for r in featured]
+        more = [_compact_row(r, detail=True) for r in more]
         game = None
         source = featured or more or rows
         if source:
             event_id = source[0].get("event_id")
-            game = next((g for g in (data.get("games") or []) if g.get("event_id") == event_id), None)
-        logs = list(player.get("logs") or [])
-        # Newest first already; cap to 20 for the chart.
+            game = next((g for g in (data.get("games") or []) if str(g.get("event_id")) == str(event_id)), None)
         return {
             "sport": data.get("sport", sport),
             "date": data.get("date", date),
             "player": {k: v for k, v in player.items() if k != "logs"},
-            "game": game,
-            "logs": logs[:20],
+            "game": _slim_game(game),
             "rows": featured,
             "more_rows": more,
         }
+
+    def player_logs(self, sport: str, date: str, player_id: str) -> dict[str, Any] | None:
+        data = self.get(sport, date)
+        player = (data.get("players") or {}).get(str(player_id))
+        if not player:
+            return None
+        slim = []
+        for g in (player.get("logs") or [])[:20]:
+            if not isinstance(g, dict):
+                g = g.to_dict() if hasattr(g, "to_dict") else dict(g)
+            slim.append(_slim_log(g))
+        return {
+            "sport": sport,
+            "date": date,
+            "player_id": str(player_id),
+            "logs": slim,
+        }
+
+    def game_context(self, sport: str, date: str, event_id: str) -> dict[str, Any] | None:
+        data = self.get(sport, date)
+        game = next(
+            (g for g in (data.get("games") or []) if str(g.get("event_id")) == str(event_id)),
+            None,
+        )
+        if not game:
+            return None
+        injuries = []
+        for item in game.get("injuries") or []:
+            injuries.append(
+                _omit_empty(
+                    {
+                        "player_id": item.get("player_id"),
+                        "player": item.get("player"),
+                        "team": item.get("team"),
+                        "position": item.get("position"),
+                        "status": item.get("status"),
+                        "detail": item.get("detail"),
+                        "comment": item.get("comment"),
+                        "return_date": item.get("return_date"),
+                    }
+                )
+            )
+        news = [i for i in injuries if i.get("comment")]
+        payload = _slim_game(game)
+        payload["injuries"] = injuries
+        payload["news"] = news
+        return payload
 
 
 def _view_label(view: str, min_l10: float) -> str:
@@ -450,8 +555,56 @@ def _best_value(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return list(best.values())
 
 
-def _compact_row(row: dict[str, Any]) -> dict[str, Any]:
-    return {k: row.get(k) for k in ROW_FIELDS}
+def _omit_empty(d: dict[str, Any]) -> dict[str, Any]:
+    out = {}
+    for k, v in d.items():
+        if v is None or v == "" or v == [] or v == {}:
+            continue
+        out[k] = v
+    return out
+
+
+def _slim_without(items: Any, limit: int = 1) -> list[dict[str, Any]]:
+    out = []
+    for item in (items or [])[:limit]:
+        if not isinstance(item, dict):
+            continue
+        out.append(
+            _omit_empty(
+                {
+                    "player": item.get("player"),
+                    "status": item.get("status"),
+                    "games": item.get("games"),
+                    "hits": item.get("hits"),
+                    "rate": item.get("rate"),
+                    "avg": item.get("avg"),
+                }
+            )
+        )
+    return out
+
+
+def _compact_row(row: dict[str, Any], *, detail: bool = False) -> dict[str, Any]:
+    fields = ROW_FIELDS if detail else CARD_FIELDS
+    out = {k: row.get(k) for k in fields}
+    limit = 3 if detail else 1
+    if out.get("without"):
+        out["without"] = _slim_without(out.get("without"), limit=limit)
+    return _omit_empty(out)
+
+
+def _slim_game(game: dict[str, Any] | None) -> dict[str, Any]:
+    if not game:
+        return {}
+    return _omit_empty({k: game.get(k) for k in GAME_CHIP_FIELDS})
+
+
+def _slim_games(games: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [_slim_game(g) for g in games or []]
+
+
+def _slim_log(log: dict[str, Any]) -> dict[str, Any]:
+    return _omit_empty({k: log.get(k) for k in LOG_FIELDS})
 
 
 

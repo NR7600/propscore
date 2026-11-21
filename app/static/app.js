@@ -32,6 +32,10 @@
     selectedKey: null,
     loading: false,
   };
+  const boardCache = new Map();
+  let inflight;
+  let lastGamesKey = "";
+  let lastStatsKey = "";
 
   function pct(rate) {
     return Math.round((rate || 0) * 100);
@@ -97,8 +101,8 @@
     if (location.hash !== path) history.pushState(null, "", path);
   }
 
-  async function api(path) {
-    const res = await fetch(path, { headers: { Accept: "application/json" } });
+  async function api(path, { signal } = {}) {
+    const res = await fetch(path, { headers: { Accept: "application/json" }, signal });
     if (!res.ok) {
       let detail = res.statusText;
       try {
@@ -130,70 +134,100 @@
     return `/api/${state.sport}/board?${p.toString()}`;
   }
 
-  async function loadBoard({ append } = {}) {
+  function showSkeletons() {
+    const card = `<article class="card skeleton" aria-hidden="true"><div class="sk-line w60"></div><div class="sk-line w80"></div><div class="sk-line w30"></div></article>`;
+    $("top-list").innerHTML = card + card + card;
+    $("list").innerHTML = "";
+    $("top-wrap").hidden = false;
+    $("empty").hidden = true;
+  }
+
+  function applyBoard(data, { append } = {}) {
+    state.date = data.date;
+    state.total = data.total;
+    state.totalPages = data.total_pages;
+    if (data.games && data.games.length) state.games = data.games;
+    state.props = data.props || state.props;
     if (!append) {
-      state.page = 1;
-      state.rows = [];
-      $("list").innerHTML = "";
+      state.top = data.top || [];
+      state.moreOpen = false;
+      state.rows = data.rows || [];
+    } else {
+      state.rows = state.rows.concat(data.rows || []);
     }
+    const meta = firstMeta(state.sport);
+    const first = !!data.first_mode || isFirstProp(state.stat);
+    $("board-view").classList.toggle("first-mode", first);
+    const slate = formatSlateDate(data.date);
+    $("date-line").textContent = slate
+      ? `${slate} slate • Ranked By Trend Strength`
+      : "Updated Daily • Ranked By Trend Strength";
+    $("view-note").textContent = data.view_label || "";
+    const firstLabel = meta.title;
+    $("top-title").textContent = first ? `Top 10 ${firstLabel}` : "Top 10 Trends";
+    $("more-title").textContent = first ? `More ${firstLabel} trends` : "More trends";
+    state.slateMessage = data.slate_message || "";
+    renderGames();
+    renderStatPills();
+    if (!append) renderTop();
+    renderList(append);
+    const moreCount = data.total || 0;
+    const topCount = (state.top || []).length;
+    $("count").textContent = topCount
+      ? `Top ${topCount}${moreCount ? ` · ${moreCount} more` : ""}`
+      : `${moreCount} trends`;
+    const emptyEl = $("empty");
+    const hasRows = topCount > 0 || moreCount > 0;
+    emptyEl.hidden = hasRows;
+    emptyEl.textContent = hasRows ? "No props match these filters." : (state.slateMessage || "No props match these filters.");
+    $("top-wrap").hidden = topCount === 0;
+    $("show-more-trends").hidden = moreCount === 0 || state.moreOpen;
+    $("show-more-trends").textContent = `Show more trends (${moreCount})`;
+    if (!append) $("more-block").hidden = !state.moreOpen;
+    $("more").hidden = !state.moreOpen || !data.has_more;
+    $("gimme-wrap").hidden = first || state.viewValue !== false;
+    $("status").textContent = "";
+  }
+
+  async function loadBoard({ append } = {}) {
+    if (inflight && !append) inflight.abort();
+    const controller = new AbortController();
+    inflight = controller;
+    if (!append) state.page = 1;
+    const path = boardQuery(state.page);
+    const cached = !append ? boardCache.get(path) : null;
+    if (cached) {
+      applyBoard(cached, { append: false });
+    } else if (!append && !$("top-list").querySelector(".card:not(.skeleton)")) {
+      showSkeletons();
+    }
+    if (!append) $("board-view").classList.add("is-loading");
+    else $("status").textContent = "Loading more…";
     state.loading = true;
-    $("status").textContent = append ? "Loading more…" : "Loading trends…";
     $("empty").hidden = true;
     try {
-      const data = await api(boardQuery(state.page));
-      state.date = data.date;
-      state.total = data.total;
-      state.totalPages = data.total_pages;
-      state.games = data.games || [];
-      state.props = data.props || state.props;
+      const data = await api(path, { signal: controller.signal });
       if (!append) {
-        state.top = data.top || [];
-        state.moreOpen = false;
+        boardCache.set(path, data);
+        if (boardCache.size > 40) boardCache.delete(boardCache.keys().next().value);
       }
-      if (append) state.rows = state.rows.concat(data.rows || []);
-      else state.rows = data.rows || [];
-      const meta = firstMeta(state.sport);
-      const first = !!data.first_mode || isFirstProp(state.stat);
-      const firstLabel = meta.title;
-      $("board-view").classList.toggle("first-mode", first);
-      const slate = formatSlateDate(data.date);
-      $("date-line").textContent = slate
-        ? `${slate} slate • Ranked By Trend Strength`
-        : "Updated Daily • Ranked By Trend Strength";
-      $("view-note").textContent = data.view_label || "";
-      const topTitle = first ? `Top 10 ${firstLabel}` : "Top 10 Trends";
-      $("top-title").textContent = topTitle;
-      $("more-title").textContent = first ? `More ${firstLabel} trends` : "More trends";
-      state.slateMessage = data.slate_message || "";
-      renderGames();
-      renderStatPills();
-      renderTop();
-      renderList(append);
-      const moreCount = data.total || 0;
-      const topCount = (state.top || []).length;
-      $("count").textContent = topCount
-        ? `Top ${topCount}${moreCount ? ` · ${moreCount} more` : ""}`
-        : `${moreCount} trends`;
-      const emptyEl = $("empty");
-      const hasRows = topCount > 0 || moreCount > 0;
-      emptyEl.hidden = hasRows;
-      emptyEl.textContent = hasRows ? "No props match these filters." : (state.slateMessage || "No props match these filters.");
-      $("top-wrap").hidden = topCount === 0;
-      $("show-more-trends").hidden = moreCount === 0 || state.moreOpen;
-      $("show-more-trends").textContent = `Show more trends (${moreCount})`;
-      if (!append) $("more-block").hidden = !state.moreOpen;
-      $("more").hidden = !state.moreOpen || !data.has_more;
-      $("gimme-wrap").hidden = first || state.viewValue !== false;
-      $("status").textContent = "";
+      applyBoard(data, { append });
     } catch (err) {
-      $("status").textContent = err.message || "Could not load the board.";
+      if (err.name === "AbortError") return;
+      if (!cached) $("status").textContent = err.message || "Could not load the board.";
     } finally {
-      state.loading = false;
+      if (inflight === controller) {
+        state.loading = false;
+        $("board-view").classList.remove("is-loading");
+      }
     }
   }
 
   function renderGames() {
     const host = $("games");
+    const key = (state.games || []).map((g) => g.event_id).join(",") + "|" + (state.game || "");
+    if (key === lastGamesKey && host.children.length) return;
+    lastGamesKey = key;
     const chips = [`<span class="smart-label">Games:</span>`,`<button type="button" class="game-chip ${state.game ? "" : "on"}" data-game="">All games</button>`];
     for (const g of state.games) {
       const label = g.label || `${g.away_abbr} @ ${g.home_abbr}`;
@@ -206,6 +240,9 @@
   function renderStatPills() {
     const host = $("stats");
     const fm = firstMeta(state.sport);
+    const key = state.sport + "|" + (state.stat || "") + "|" + (state.props || []).map((p) => p.key).join(",");
+    if (key === lastStatsKey && host.children.length) return;
+    lastStatsKey = key;
     const firstKey = fm.key;
     const firstLabel = fm.chip;
     const allLabel = fm.all;
@@ -321,13 +358,15 @@
     $("player-view").hidden = false;
     $("player-header").textContent = "Loading player…";
     $("player-lines").innerHTML = "";
-    $("chart-wrap").innerHTML = "";
+    $("chart-wrap").innerHTML = `<p class="status">Loading chart…</p>`;
     $("player-stats").innerHTML = "";
     $("player-context").innerHTML = "";
     $("player-panel").innerHTML = "";
     try {
-      const data = await api(`/api/${state.sport}/player/${playerId}${state.date ? `?date=${state.date}` : ""}`);
+      const q = state.date ? `?date=${state.date}` : "";
+      const data = await api(`/api/${state.sport}/player/${playerId}${q}`);
       state.player = data;
+      state.player.logs = state.player.logs || [];
       state.moreRows = data.more_rows || [];
       const rows = playerAllRows(data);
       let selected = (data.rows || [])[0] || rows[0];
@@ -346,6 +385,17 @@
       state.showMoreLines = !!(selected && !featuredIds.has(`${selected.prop}:${selected.side}:${selected.line}`));
       state.selectedKey = selected ? `${selected.prop}:${selected.side}:${selected.line}` : null;
       renderPlayer();
+      const eventId = (data.game && data.game.event_id) || (selected && selected.event_id);
+      Promise.all([
+        api(`/api/${state.sport}/player/${playerId}/logs${q}`).catch(() => null),
+        eventId ? api(`/api/${state.sport}/game/${eventId}${q}`).catch(() => null) : null,
+      ]).then(([logsData, gameData]) => {
+        const currentId = String((state.player && state.player.player && state.player.player.id) || "");
+        if (currentId && currentId !== String(playerId)) return;
+        if (logsData && logsData.logs) state.player.logs = logsData.logs;
+        if (gameData) state.player.game = Object.assign({}, state.player.game || {}, gameData);
+        renderPlayer();
+      });
     } catch (err) {
       $("player-header").innerHTML = `<p class="status">${escapeHtml(err.message)}</p>`;
     }
@@ -557,6 +607,21 @@
   }
 
   function boxCols(sport, role, prop) {
+    if (sport === "nfl") {
+      return [
+        { label: "OPP", value: (g) => `${g.venue === "H" || g.is_home ? "vs" : "@"} ${g.opponent_abbr || ""}` },
+        { label: "CMP", value: (g) => g.completions || 0 },
+        { label: "ATT", value: (g) => g.pass_att || 0 },
+        { label: "PYD", value: (g) => g.pass_yds || 0 },
+        { label: "PTD", value: (g) => g.pass_td || 0 },
+        { label: "INT", value: (g) => g.ints || 0 },
+        { label: "CAR", value: (g) => g.rush_att || 0 },
+        { label: "RYD", value: (g) => g.rush_yds || 0 },
+        { label: "REC", value: (g) => g.receptions || 0 },
+        { label: "REY", value: (g) => g.rec_yds || 0 },
+        { label: "TD", value: (g) => g.anytime_td ?? ((g.rush_td || 0) + (g.rec_td || 0)) },
+      ];
+    }
     if (sport === "nhl" && role === "goalie") {
       return [
         { label: "TOI", value: (g) => g.minutes },
@@ -632,6 +697,9 @@
         state.stat = "";
         state.game = "";
         state.date = null;
+        boardCache.clear();
+        lastGamesKey = "";
+        lastStatsKey = "";
         document.querySelectorAll(".sport").forEach((b) => b.classList.toggle("on", b.dataset.sport === sport));
         setHash(sport);
         $("board-view").hidden = false;
@@ -776,6 +844,13 @@
 
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("/sw.js").catch(() => {});
+    navigator.serviceWorker.addEventListener("message", (event) => {
+      if (!event.data || event.data.type !== "api-update") return;
+      const url = event.data.url || "";
+      if (!url.includes(`/api/${state.sport}/board`)) return;
+      // Drop memory cache so the next render picks up the fresh board.
+      boardCache.clear();
+    });
   }
 
   bind();

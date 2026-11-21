@@ -91,12 +91,18 @@ def attach_without_splits(
             played = _played(logs_by_player.get(player.id) or [], before_date=slate_date)
             splits = []
             for mate in mates:
+                mate_played = played_events.get(mate.id, set())
+                # Skip teammates who never appeared in the log window
+                # (IR all year, or no overlap) — otherwise every game is
+                # "without them" and the rate equals the season rate.
+                if len(mate_played) < 3:
+                    continue
                 without = [
                     g
                     for g in played
-                    if not g.event_id or g.event_id not in played_events.get(mate.id, set())
+                    if not g.event_id or g.event_id not in mate_played
                 ]
-                if len(without) < 3:
+                if len(without) < 3 or len(without) >= len(played):
                     continue
                 hits = sum(1 for g in without if _is_hit(g, row.prop, row.line, row.side))
                 n = len(without)

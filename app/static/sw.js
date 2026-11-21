@@ -1,5 +1,6 @@
-/* Da Real Big Homie Props service worker: cache the app shell, always fetch API fresh. */
-const CACHE = "bhp-shell-v9";
+/* Da Real Big Homie Props service worker: cache the app shell; SWR for APIs. */
+const CACHE = "bhp-shell-v10";
+const API_CACHE = "bhp-api-v1";
 const SHELL = [
   "/",
   "/styles.css",
@@ -18,12 +19,40 @@ self.addEventListener("install", (event) => {
 });
 
 self.addEventListener("activate", (event) => {
+  const keep = new Set([CACHE, API_CACHE]);
   event.waitUntil(
     caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
+      Promise.all(keys.filter((k) => !keep.has(k)).map((k) => caches.delete(k)))
     ).then(() => self.clients.claim())
   );
 });
+
+async function staleWhileRevalidate(req, cacheName) {
+  const cache = await caches.open(cacheName);
+  const cached = await cache.match(req);
+  const network = fetch(req)
+    .then((res) => {
+      if (res && res.ok) {
+        cache.put(req, res.clone());
+        if (cached) {
+          res.clone().text().then((text) => {
+            cached.clone().text().then((old) => {
+              if (old !== text) {
+                self.clients.matchAll().then((clients) => {
+                  for (const client of clients) {
+                    client.postMessage({ type: "api-update", url: req.url });
+                  }
+                });
+              }
+            });
+          }).catch(() => {});
+        }
+      }
+      return res;
+    })
+    .catch(() => cached);
+  return cached || network;
+}
 
 self.addEventListener("fetch", (event) => {
   const req = event.request;
@@ -31,9 +60,12 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
 
-  // APIs and refresh: network only (don't serve a stale 3 MB board).
-  if (url.pathname.startsWith("/api/") || url.pathname === "/health") {
+  if (url.pathname === "/api/refresh") {
     event.respondWith(fetch(req));
+    return;
+  }
+  if (url.pathname.startsWith("/api/") || url.pathname === "/health") {
+    event.respondWith(staleWhileRevalidate(req, API_CACHE));
     return;
   }
 
