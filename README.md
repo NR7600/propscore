@@ -1,8 +1,14 @@
 # Da Real Big Homie Props
 
 A Slipscore-style player prop research app (the code and repo are still named `propscore`). It pulls tonight’s NBA or NHL slate,
-recent game logs, and injury tags, then ranks standard over-lines by trend
-strength. Use it in the browser or install it to a phone’s Home Screen.
+recent game logs, and injury tags, then ranks standard over **and** under
+lines by trend strength. Cards show L5/L10/L20/season/H2H hit rates, home/away
+and game streaks, rest/B2B, and a player page with a hit/miss bar chart, box
+score, both-team injuries, and an on-device slip builder. Use it in the
+browser or install it to a phone’s Home Screen.
+
+A sourced inventory of Slipscore’s public features is in
+[SLIPSCORE_FEATURES.md](SLIPSCORE_FEATURES.md).
 
 **21+. Research only. This is not a sportsbook and not betting advice.**
 
@@ -42,18 +48,19 @@ Public hosting is covered in [DEPLOY.md](DEPLOY.md) (Render free web service).
 The generator still writes every standard line (PTS 10+/15+/20+/25+, and so
 on) to `output/`. The app’s default view does **not** list all of them.
 
-For each player and stat, it keeps only the **highest line that still hit in
-at least 70% of the player’s last 10 games** (the Min L10 slider changes that
-cutoff). That is the most ambitious threshold the player is still clearing at
-a strong rate — so a big scorer shows “PTS 25+” at 80%, not a perfect “PTS
-10+” at 100%. Turn off **Best value** to see every qualifying line, optionally
-hiding 100% hits on the lowest threshold.
+For each player, stat, and side, overs keep the **highest line that still hit
+in at least 70% of the player’s last 10 games**; unders keep the **lowest**
+line that still clears that rate (the Min L10 slider changes the cutoff).
+Integer thresholds are shown as half-lines (25+ is Over/Under 24.5). Turn off
+**Best value** to see every qualifying line, optionally hiding 100% hits on
+the easiest threshold. **All / Over / Under** tabs, **100% Trends**, and
+**Longest Streaks** match the Slipscore board filters we could verify.
 
 ## API
 
 | Endpoint | What it returns |
 | --- | --- |
-| `GET /api/nba/board` | Paginated ranked props. Query: `date`, `stat`, `game`, `min_l10`, `hide_out`, `hide_gimme`, `view=value\|all`, `q`, `page`, `page_size` |
+| `GET /api/nba/board` | Paginated ranked props. Query: `date`, `stat`, `game`, `min_l10`, `hide_out`, `hide_gimme`, `view=value\|all`, `side=over\|under`, `perfect`, `sort=score\|streak`, `q`, `page`, `page_size` |
 | `GET /api/nba/player/{id}` | Player bio, injury, last-20 logs, and all of their lines |
 | `GET /api/nba/meta` | Games, date, generated-at |
 | `GET /api/sports` | NBA and NHL live; NFL marked coming soon |
@@ -74,6 +81,7 @@ Free public ESPN JSON only. No paid keys are required.
 | `stats.nba.com` playergamelogs | — | Timed out from this environment |
 | NHL slate / rosters / injuries | `site.api.espn.com/.../hockey/nhl/...` | Works |
 | NHL game logs | `site.web.api.espn.com/.../hockey/nhl/athletes/{id}/gamelog?season=2027` | Works |
+| NBA/NHL standings (team points or goals allowed) | `site.api.espn.com/apis/v2/sports/.../standings` | Works |
 
 The 2026-27 NBA and NHL seasons are ESPN season year `2027`.
 

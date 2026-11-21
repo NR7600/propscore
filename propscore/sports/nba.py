@@ -27,9 +27,12 @@ SEASON_YEAR = 2027
 
 STAT_INDEX = {
     "minutes": 0,
+    "fg_made_att": 1,
     "threes_made_att": 3,
     "rebounds": 7,
     "assists": 8,
+    "blocks": 9,
+    "steals": 10,
     "points": 13,
 }
 
@@ -129,6 +132,11 @@ class NBA:
         "assists": "AST",
         "threes": "3PM",
         "pra": "PRA",
+        "pts_reb": "PTS+REB",
+        "pts_ast": "PTS+AST",
+        "reb_ast": "REB+AST",
+        "steals": "STL",
+        "blocks": "BLK",
     }
 
     def __init__(self, client: HttpClient):
@@ -282,6 +290,13 @@ class NBA:
                         if len(stats) > STAT_INDEX["threes_made_att"]
                         else 0
                     )
+                    fgm = _parse_made(
+                        stats[STAT_INDEX["fg_made_att"]]
+                        if len(stats) > STAT_INDEX["fg_made_att"]
+                        else 0
+                    )
+                    steals = _parse_int(stats[STAT_INDEX["steals"]] if len(stats) > STAT_INDEX["steals"] else 0)
+                    blocked = _parse_int(stats[STAT_INDEX["blocks"]] if len(stats) > STAT_INDEX["blocks"] else 0)
                     at_vs = (meta.get("atVs") or "").strip()
                     is_home = at_vs.lower() in {"vs", "vs."}
                     opponent = (meta.get("opponent") or {}).get("abbreviation") or ""
@@ -298,6 +313,9 @@ class NBA:
                             threes=threes,
                             pra=points + rebounds + assists,
                             result=meta.get("gameResult"),
+                            steals=steals,
+                            blocked=blocked,
+                            fgm=fgm,
                         )
                     )
         # Unique by event, newest first.

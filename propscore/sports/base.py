@@ -79,9 +79,22 @@ class GameLog:
     hits: int = 0
     saves: int = 0
     started: bool = False
+    steals: int = 0
+    fgm: int = 0
 
     def value(self, stat: str) -> float:
-        raw = getattr(self, stat, 0)
+        if stat == "blocks":
+            raw = self.blocked
+        elif stat == "pts_reb":
+            raw = self.points + self.rebounds
+        elif stat == "pts_ast":
+            raw = self.points + self.assists
+        elif stat == "reb_ast":
+            raw = self.rebounds + self.assists
+        elif stat == "pra":
+            raw = self.pra if self.pra else (self.points + self.rebounds + self.assists)
+        else:
+            raw = getattr(self, stat, 0)
         try:
             return float(raw)
         except (TypeError, ValueError):

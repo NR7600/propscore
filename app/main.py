@@ -42,7 +42,7 @@ log = logging.getLogger("propscore")
 _refresh_lock = threading.Lock()
 _refresh_state: dict = {"running": False, "last": None, "error": None}
 
-app = FastAPI(title="Da Real Big Homie Props", version="1.1.0", docs_url="/api/docs", redoc_url=None)
+app = FastAPI(title="Da Real Big Homie Props", version="1.2.0", docs_url="/api/docs", redoc_url=None)
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
 
@@ -79,6 +79,8 @@ def health():
         "nba_dates": available_dates("nba"),
         "nhl_dates": available_dates("nhl"),
         "refresh": _refresh_state,
+        "features": "trends-v2",
+        "app": "Da Real Big Homie Props",
     }
 
 
@@ -105,6 +107,9 @@ def board(
     hide_gimme: bool = False,
     view: str = Query("value", pattern="^(value|all)$"),
     q: str = "",
+    side: str = Query("", pattern="^(|over|under)$"),
+    perfect: bool = False,
+    sort: str = Query("score", pattern="^(score|streak)$"),
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=50),
 ):
@@ -120,6 +125,9 @@ def board(
         hide_gimme=hide_gimme,
         view=view,
         q=q,
+        side=side,
+        perfect=perfect,
+        sort=sort,
         page=page,
         page_size=page_size,
     )

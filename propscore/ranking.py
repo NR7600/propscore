@@ -19,13 +19,17 @@ player has fewer than 5/10/20. Venue rate falls back to the season
 rate when the player has fewer than 3 games at that venue. Players
 with fewer than MIN_GAMES played games, or a season minutes average
 below MIN_AVG_MINUTES, are skipped.
+
+Each standard threshold is ranked on both the Over and the Under.
+An over hits when value >= line; an under hits when value < line.
 """
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from datetime import date as date_cls
 
-from .odds import PROP_LABELS, get_lines, line_label
+from .odds import PROP_LABELS, get_lines, line_label, display_line, prop_full_label
 from .sports.base import Game, GameLog, Player
 
 MIN_GAMES = 5
@@ -42,6 +46,7 @@ WEIGHTS = {
 }
 STREAK_CAP = 5
 VENUE_MIN_GAMES = 3
+H2H_MIN_GAMES = 2
 
 
 @dataclass
@@ -57,14 +62,22 @@ class PropRow:
     game_time_et: str
     prop: str
     prop_label: str
+    prop_full: str
     line: float
+    display_line: float
     line_label: str
+    side: str  # "over" or "under"
     l5: float
     l10: float
     l20: float
     season: float
     venue_hit: float
+    home_hit: float
+    away_hit: float
+    h2h: float
     streak: int
+    home_streak: int
+    away_streak: int
     score: float
     games_played: int
     avg_minutes: float
@@ -78,42 +91,104 @@ class PropRow:
     season_games: int
     venue_hits: int
     venue_games: int
+    home_hits: int
+    home_games: int
+    away_hits: int
+    away_games: int
+    h2h_hits: int
+    h2h_games: int
+    l5_avg: float
+    l10_avg: float
+    season_avg: float
+    h2h_avg: float
+    min_l5: float
+    min_l10: float
+    minutes_trend: list[float] = field(default_factory=list)
+    rest_days: int | None = None
+    is_b2b: bool = False
     injury_status: str | None = None
     injury_detail: str | None = None
     position: str = ""
     headshot: str = ""
+    # Filled in after ranking (standings / teammate splits).
+    opp_def_rank: int | None = None
+    opp_def_teams: int | None = None
+    opp_def_value: float | None = None
+    opp_def_label: str = ""
+    opp_def_stat: str = ""
+    matchup_tag: str = ""
+    without: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
 
 
-def _played(logs: list[GameLog]) -> list[GameLog]:
+def _played(logs: list[GameLog], before_date: str = "") -> list[GameLog]:
     # Newest first. Callers should already pass them that way, but
     # sort defensively so streak always starts at the most recent game.
+    # Logs on or after the slate date are dropped so a same-day ESPN
+    # date prefix (or today's finished game) does not zero out rest
+    # or leak into pregame L5/L10.
     played = [g for g in logs if g.minutes and g.minutes > 0]
+    if before_date:
+        played = [g for g in played if (g.date or "")[:10] < before_date]
     return sorted(played, key=lambda g: (g.date, g.event_id), reverse=True)
 
 
-def _hit_rate(logs: list[GameLog], stat: str, line: float) -> tuple[float, int, int]:
+def _is_hit(game: GameLog, stat: str, line: float, side: str) -> bool:
+    value = game.value(stat)
+    if side == "under":
+        return value < line
+    return value >= line
+
+
+def _hit_rate(
+    logs: list[GameLog], stat: str, line: float, side: str
+) -> tuple[float, int, int]:
     if not logs:
         return 0.0, 0, 0
-    hits = sum(1 for g in logs if g.value(stat) >= line)
+    hits = sum(1 for g in logs if _is_hit(g, stat, line, side))
     n = len(logs)
     return hits / n, hits, n
 
 
-def _hit_streak(logs_newest_first: list[GameLog], stat: str, line: float) -> int:
+def _hit_streak(
+    logs_newest_first: list[GameLog], stat: str, line: float, side: str
+) -> int:
     streak = 0
     for g in logs_newest_first:
-        if g.value(stat) >= line:
+        if _is_hit(g, stat, line, side):
             streak += 1
         else:
             break
     return streak
 
 
+def _avg(logs: list[GameLog], stat: str) -> float:
+    if not logs:
+        return 0.0
+    return sum(g.value(stat) for g in logs) / len(logs)
+
+
 def _window(logs_newest_first: list[GameLog], n: int) -> list[GameLog]:
     return logs_newest_first[:n]
+
+
+def _rest(played_newest_first: list[GameLog], slate_date: str) -> tuple[int | None, bool]:
+    if not played_newest_first or not slate_date:
+        return None, False
+    last = (played_newest_first[0].date or "")[:10]
+    try:
+        last_d = date_cls.fromisoformat(last)
+        slate_d = date_cls.fromisoformat(slate_date)
+    except ValueError:
+        return None, False
+    delta = (slate_d - last_d).days
+    if delta < 0:
+        return None, False
+    # Played yesterday → 0 days of rest, back-to-back.
+    rest = max(delta - 1, 0)
+    return rest, delta == 1
 
 
 def trend_score(
@@ -140,8 +215,9 @@ def qualify(
     min_games: int = MIN_GAMES,
     min_avg_minutes: float = MIN_AVG_MINUTES,
     starts_only: bool = False,
+    slate_date: str = "",
 ) -> tuple[list[GameLog], float] | None:
-    played = _played(logs)
+    played = _played(logs, before_date=slate_date)
     if starts_only:
         played = [g for g in played if getattr(g, "started", False)]
     if len(played) < min_games:
@@ -161,20 +237,33 @@ def rank_player_props(
     min_games: int = MIN_GAMES,
     min_avg_minutes: float = MIN_AVG_MINUTES,
     starts_only: bool = False,
+    slate_date: str = "",
 ) -> list[PropRow]:
     qualified = qualify(
         logs,
         min_games=min_games,
         min_avg_minutes=min_avg_minutes,
         starts_only=starts_only,
+        slate_date=slate_date,
     )
     if qualified is None:
         return []
     played, avg_min = qualified
     is_home = player.team_id == game.home_id
-    venue_logs = [g for g in played if g.is_home == is_home]
     opponent = game.away_abbr if is_home else game.home_abbr
     venue_flag = "H" if is_home else "A"
+    venue_logs = [g for g in played if g.is_home == is_home]
+    home_logs = [g for g in played if g.is_home]
+    away_logs = [g for g in played if not g.is_home]
+    h2h_logs = [
+        g
+        for g in played
+        if (g.opponent_abbr or "").upper() == (opponent or "").upper()
+    ]
+    rest_days, is_b2b = _rest(played, slate_date)
+    minutes_trend = [round(g.minutes, 1) for g in played[:10]]
+    min_l5 = round(sum(g.minutes for g in played[:5]) / max(len(played[:5]), 1), 1)
+    min_l10 = round(sum(g.minutes for g in played[:10]) / max(len(played[:10]), 1), 1)
 
     rows: list[PropRow] = []
     player_payload = {
@@ -184,56 +273,90 @@ def rank_player_props(
     }
     for prop in props:
         for line in get_lines(player_payload, prop, sport=sport):
-            l5_r, l5_h, l5_n = _hit_rate(_window(played, 5), prop, line)
-            l10_r, l10_h, l10_n = _hit_rate(_window(played, 10), prop, line)
-            l20_r, l20_h, l20_n = _hit_rate(_window(played, 20), prop, line)
-            sea_r, sea_h, sea_n = _hit_rate(played, prop, line)
-            if len(venue_logs) >= VENUE_MIN_GAMES:
-                ven_r, ven_h, ven_n = _hit_rate(venue_logs, prop, line)
-            else:
-                ven_r, ven_h, ven_n = sea_r, sea_h, sea_n
-            streak = _hit_streak(played, prop, line)
-            score = trend_score(l5_r, l10_r, l20_r, sea_r, ven_r, streak)
-            rows.append(
-                PropRow(
-                    player_id=player.id,
-                    player=player.name,
-                    team=player.team_abbr,
-                    team_name=player.team_name,
-                    opponent=opponent,
-                    venue=venue_flag,
-                    event_id=game.event_id,
-                    game=game.label(),
-                    game_time_et=game.start_et,
-                    prop=prop,
-                    prop_label=PROP_LABELS.get(prop, prop.upper()),
-                    line=line,
-                    line_label=line_label(prop, line),
-                    l5=round(l5_r, 4),
-                    l10=round(l10_r, 4),
-                    l20=round(l20_r, 4),
-                    season=round(sea_r, 4),
-                    venue_hit=round(ven_r, 4),
-                    streak=streak,
-                    score=score,
-                    games_played=len(played),
-                    avg_minutes=round(avg_min, 1),
-                    l5_hits=l5_h,
-                    l5_games=l5_n,
-                    l10_hits=l10_h,
-                    l10_games=l10_n,
-                    l20_hits=l20_h,
-                    l20_games=l20_n,
-                    season_hits=sea_h,
-                    season_games=sea_n,
-                    venue_hits=ven_h,
-                    venue_games=ven_n,
-                    injury_status=player.injury_status,
-                    injury_detail=player.injury_detail,
-                    position=player.position,
-                    headshot=player.headshot,
+            shown = display_line(line)
+            l5_avg = round(_avg(_window(played, 5), prop), 2)
+            l10_avg = round(_avg(_window(played, 10), prop), 2)
+            season_avg = round(_avg(played, prop), 2)
+            h2h_avg = round(_avg(h2h_logs, prop), 2) if h2h_logs else 0.0
+            for side in ("over", "under"):
+                l5_r, l5_h, l5_n = _hit_rate(_window(played, 5), prop, line, side)
+                l10_r, l10_h, l10_n = _hit_rate(_window(played, 10), prop, line, side)
+                l20_r, l20_h, l20_n = _hit_rate(_window(played, 20), prop, line, side)
+                sea_r, sea_h, sea_n = _hit_rate(played, prop, line, side)
+                if len(venue_logs) >= VENUE_MIN_GAMES:
+                    ven_r, ven_h, ven_n = _hit_rate(venue_logs, prop, line, side)
+                else:
+                    ven_r, ven_h, ven_n = sea_r, sea_h, sea_n
+                home_r, home_h, home_n = _hit_rate(home_logs, prop, line, side) if home_logs else (0.0, 0, 0)
+                away_r, away_h, away_n = _hit_rate(away_logs, prop, line, side) if away_logs else (0.0, 0, 0)
+                h2h_r, h2h_h, h2h_n = _hit_rate(h2h_logs, prop, line, side) if h2h_logs else (0.0, 0, 0)
+                streak = _hit_streak(played, prop, line, side)
+                home_streak = _hit_streak(home_logs, prop, line, side)
+                away_streak = _hit_streak(away_logs, prop, line, side)
+                score = trend_score(l5_r, l10_r, l20_r, sea_r, ven_r, streak)
+                rows.append(
+                    PropRow(
+                        player_id=player.id,
+                        player=player.name,
+                        team=player.team_abbr,
+                        team_name=player.team_name,
+                        opponent=opponent,
+                        venue=venue_flag,
+                        event_id=game.event_id,
+                        game=game.label(),
+                        game_time_et=game.start_et,
+                        prop=prop,
+                        prop_label=PROP_LABELS.get(prop, prop.upper()),
+                        prop_full=prop_full_label(prop),
+                        line=line,
+                        display_line=shown,
+                        line_label=line_label(prop, line, side),
+                        side=side,
+                        l5=round(l5_r, 4),
+                        l10=round(l10_r, 4),
+                        l20=round(l20_r, 4),
+                        season=round(sea_r, 4),
+                        venue_hit=round(ven_r, 4),
+                        home_hit=round(home_r, 4),
+                        away_hit=round(away_r, 4),
+                        h2h=round(h2h_r, 4),
+                        streak=streak,
+                        home_streak=home_streak,
+                        away_streak=away_streak,
+                        score=score,
+                        games_played=len(played),
+                        avg_minutes=round(avg_min, 1),
+                        l5_hits=l5_h,
+                        l5_games=l5_n,
+                        l10_hits=l10_h,
+                        l10_games=l10_n,
+                        l20_hits=l20_h,
+                        l20_games=l20_n,
+                        season_hits=sea_h,
+                        season_games=sea_n,
+                        venue_hits=ven_h,
+                        venue_games=ven_n,
+                        home_hits=home_h,
+                        home_games=home_n,
+                        away_hits=away_h,
+                        away_games=away_n,
+                        h2h_hits=h2h_h,
+                        h2h_games=h2h_n,
+                        l5_avg=l5_avg,
+                        l10_avg=l10_avg,
+                        season_avg=season_avg,
+                        h2h_avg=h2h_avg,
+                        min_l5=min_l5,
+                        min_l10=min_l10,
+                        minutes_trend=minutes_trend,
+                        rest_days=rest_days,
+                        is_b2b=is_b2b,
+                        injury_status=player.injury_status,
+                        injury_detail=player.injury_detail,
+                        position=player.position,
+                        headshot=player.headshot,
+                    )
                 )
-            )
     return rows
 
 
@@ -244,6 +367,7 @@ def rank_slate(
     props: list[str],
     sport: str = "nba",
     qualification=None,
+    slate_date: str = "",
 ) -> list[PropRow]:
     game_by_team = {}
     for g in games:
@@ -268,6 +392,7 @@ def rank_slate(
                 min_games=opts.get("min_games", MIN_GAMES),
                 min_avg_minutes=opts.get("min_avg_minutes", MIN_AVG_MINUTES),
                 starts_only=opts.get("starts_only", False),
+                slate_date=slate_date,
             )
         )
 

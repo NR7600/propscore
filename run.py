@@ -95,10 +95,23 @@ def main() -> int:
             if done % 20 == 0 or done == len(players):
                 print(f"  {done}/{len(players)} logs")
 
+    from propscore.context import attach_defense, attach_without_splits, games_with_context
+    from propscore.defense import fetch_defense_ranks
+
     qual = getattr(sport, "qualification", None)
     rows = rank_slate(
-        players, logs, games, list(sport.props.keys()), sport=sport.key, qualification=qual
+        players,
+        logs,
+        games,
+        list(sport.props.keys()),
+        sport=sport.key,
+        qualification=qual,
+        slate_date=date,
     )
+    defense = fetch_defense_ranks(sport.key, client)
+    attach_defense(rows, defense)
+    attach_without_splits(rows, players, logs, slate_date=date)
+    game_payloads = games_with_context(games, players)
     qualified = {r.player_id for r in rows}
     print(f"Ranked {len(rows)} prop lines across {len(qualified)} players.")
 
@@ -111,9 +124,15 @@ def main() -> int:
             "Goalie logs include starts and saves."
         )
         notes.append(
-            "Lines are standard over-thresholds (G 0.5/1.5, A 0.5/1.5, PTS 0.5/1.5/2.5, "
-            "SOG 1.5/2.5/3.5/4.5, SV 20.5/25.5/30.5). Skaters need 5 games and ~10 minutes "
-            "TOI; goalies need 5 starts. Set ODDS_API_KEY later to swap in sportsbook lines."
+            "Lines are standard over- and under-thresholds (G 0.5/1.5, A 0.5/1.5, "
+            "PTS 0.5/1.5/2.5, SOG 1.5/2.5/3.5/4.5, SV 20.5/25.5/30.5). Skaters need "
+            "5 games and ~10 minutes TOI; goalies need 5 starts. Set ODDS_API_KEY "
+            "later to swap in sportsbook lines."
+        )
+        notes.append(
+            "Opponent defense is team goals allowed from ESPN standings (not "
+            "defense-vs-position). H2H, home/away, rest/B2B, TOI trend, and "
+            "without-teammate splits are computed from ESPN player game logs."
         )
         sources = [
             "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard",
@@ -127,9 +146,15 @@ def main() -> int:
             "cdn.nba.com returned 403 and stats.nba.com timed out from this environment."
         )
         notes.append(
-            "No free odds feed is wired in; lines are standard over-thresholds "
-            "(PTS 10/15/20/25, REB 4/6/8/10, AST 2/4/6/8, 3PM 1/2/3/4, PRA 15/20/25/30). "
-            "Set ODDS_API_KEY later to swap in sportsbook lines."
+            "No free odds feed is wired in; lines are standard over- and under-thresholds "
+            "(PTS 10/15/20/25, REB 4/6/8/10, AST 2/4/6/8, 3PM 1/2/3/4, PRA 15/20/25/30, "
+            "PTS+REB, PTS+AST, REB+AST, STL/BLK 0.5/1.5/2.5). Displayed as half-lines "
+            "(25+ is Over/Under 24.5). Set ODDS_API_KEY later to swap in sportsbook lines."
+        )
+        notes.append(
+            "Opponent defense is team points allowed from ESPN standings (not "
+            "defense-vs-position). H2H, home/away, rest/B2B, minutes trend, and "
+            "without-teammate splits are computed from ESPN player game logs."
         )
         sources = [
             "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard",
@@ -150,7 +175,7 @@ def main() -> int:
         date=date,
         generated_at=generated_at,
         sources=sources,
-        games=games,
+        games=game_payloads,
         players=players,
         logs=logs,
         rows=rows,
@@ -171,9 +196,9 @@ def main() -> int:
 
     print()
     print("Top 10 by trend score:")
-    print(f"{'#':<4}{'Player':<24}{'Prop':<12}{'L10':>6}{'Strk':>6}{'Score':>8}")
+    print(f"{'#':<4}{'Player':<24}{'Prop':<22}{'L10':>6}{'Strk':>6}{'Score':>8}")
     for i, r in enumerate(rows[:10], start=1):
-        print(f"{i:<4}{r.player:<24}{r.line_label:<12}{r.l10*100:5.0f}%{r.streak:6d}{r.score:8.1f}")
+        print(f"{i:<4}{r.player:<24}{r.line_label:<22}{r.l10*100:5.0f}%{r.streak:6d}{r.score:8.1f}")
 
     print()
     print("Wrote:")

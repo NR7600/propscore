@@ -32,21 +32,31 @@
     </header>
 
     <section id="board-view">
+      <div class="trend-tabs" role="tablist" aria-label="Over or under">
+        <button type="button" class="trend-tab" data-side="" role="tab">All Trends</button>
+        <button type="button" class="trend-tab on" data-side="over" role="tab">Over Trends</button>
+        <button type="button" class="trend-tab" data-side="under" role="tab">Under Trends</button>
+      </div>
+
       <div class="games" id="games" role="list" aria-label="Tonight’s games"></div>
 
       <div class="toolbar">
+        <div class="smart-filters">
+          <span class="smart-label">Smart filters:</span>
+          <label class="check">
+            <input type="checkbox" id="perfect">
+            <span>100% Trends</span>
+          </label>
+          <label class="check">
+            <input type="checkbox" id="sort-streak">
+            <span>Longest Streaks</span>
+          </label>
+        </div>
+        <div class="stat-pills" id="stats"></div>
         <label class="search">
           <span class="sr-only">Search players</span>
-          <input id="q" type="search" placeholder="Search a player or team" autocomplete="off">
+          <input id="q" type="search" placeholder="Search players…" autocomplete="off">
         </label>
-        <div class="stat-pills" id="stats">
-          <button class="pill on" data-stat="">All</button>
-          <button class="pill" data-stat="points">PTS</button>
-          <button class="pill" data-stat="rebounds">REB</button>
-          <button class="pill" data-stat="assists">AST</button>
-          <button class="pill" data-stat="threes">3PM</button>
-          <button class="pill" data-stat="pra">PRA</button>
-        </div>
         <div class="filter-bar">
           <label class="toggle">
             <input type="checkbox" id="view-value" checked>
@@ -85,9 +95,28 @@
       <button class="back" id="back" type="button">← Board</button>
       <div id="player-header"></div>
       <div id="player-lines" class="stat-pills wrap"></div>
-      <div id="player-stats" class="rates"></div>
       <div id="chart-wrap"></div>
+      <div id="player-stats" class="rates"></div>
+      <div id="player-context" class="context"></div>
+      <div class="detail-tabs" role="tablist">
+        <button type="button" class="detail-tab on" data-tab="box">Box Score</button>
+        <button type="button" class="detail-tab" data-tab="injuries">Injuries</button>
+        <button type="button" class="detail-tab" data-tab="news">News</button>
+      </div>
+      <div id="player-panel"></div>
     </section>
+  </div>
+
+  <div id="slip" class="slip" hidden>
+    <button type="button" id="slip-toggle" class="slip-toggle">Slip <span id="slip-count">0</span></button>
+    <div id="slip-body" class="slip-body" hidden>
+      <div class="slip-head">
+        <strong>Your slip</strong>
+        <button type="button" id="slip-clear">Clear</button>
+      </div>
+      <div id="slip-legs"></div>
+      <p class="slip-note">Saved on this device only. Research, not a bet ticket. 21+.</p>
+    </div>
   </div>
 
   <div id="toast" class="toast" hidden></div>

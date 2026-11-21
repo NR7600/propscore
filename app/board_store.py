@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from propscore.odds import lowest_line, props_for_sport
+from propscore.odds import lines_for_sport, lowest_line, props_for_sport
 
 ET = ZoneInfo("America/New_York")
 ROOT = Path(__file__).resolve().parent.parent
@@ -26,20 +26,59 @@ ROW_FIELDS = (
     "game_time_et",
     "prop",
     "prop_label",
+    "prop_full",
     "line",
+    "display_line",
     "line_label",
+    "side",
     "l5",
     "l10",
     "l20",
     "season",
+    "h2h",
     "venue_hit",
+    "home_hit",
+    "away_hit",
     "streak",
+    "home_streak",
+    "away_streak",
     "score",
     "games_played",
+    "avg_minutes",
+    "l5_hits",
+    "l5_games",
+    "l10_hits",
+    "l10_games",
+    "l20_hits",
+    "l20_games",
+    "season_hits",
+    "season_games",
+    "h2h_hits",
+    "h2h_games",
+    "home_hits",
+    "home_games",
+    "away_hits",
+    "away_games",
+    "l5_avg",
+    "l10_avg",
+    "season_avg",
+    "h2h_avg",
+    "min_l5",
+    "min_l10",
+    "minutes_trend",
+    "rest_days",
+    "is_b2b",
     "injury_status",
     "injury_detail",
     "position",
     "headshot",
+    "opp_def_rank",
+    "opp_def_teams",
+    "opp_def_value",
+    "opp_def_label",
+    "opp_def_stat",
+    "matchup_tag",
+    "without",
 )
 
 
@@ -124,6 +163,9 @@ class BoardStore:
         hide_gimme: bool = False,
         view: str = "value",
         q: str = "",
+        side: str = "",
+        perfect: bool = False,
+        sort: str = "score",
         page: int = 1,
         page_size: int = 25,
     ) -> dict[str, Any]:
@@ -138,6 +180,9 @@ class BoardStore:
             hide_gimme=hide_gimme,
             view=view,
             q=q,
+            side=side,
+            perfect=perfect,
+            sort=sort,
         )
         page = max(1, page)
         page_size = min(max(1, page_size), 50)
@@ -163,6 +208,9 @@ class BoardStore:
                 "hide_out": hide_out,
                 "hide_gimme": hide_gimme,
                 "q": q or "",
+                "side": side or "",
+                "perfect": perfect,
+                "sort": sort or "score",
             },
             "page": page,
             "page_size": page_size,
@@ -185,6 +233,8 @@ class BoardStore:
             for r in (data.get("rows") or [])
             if str(r.get("player_id")) == str(player_id)
         ]
+        # Prefer a score-sorted list so the detail page can pick a default line.
+        rows.sort(key=lambda r: (-(r.get("score") or 0), -(r.get("l10") or 0)))
         game = None
         if rows:
             event_id = rows[0].get("event_id")
@@ -231,6 +281,9 @@ def _filter_rows(
     hide_gimme: bool,
     view: str,
     q: str,
+    side: str = "",
+    perfect: bool = False,
+    sort: str = "score",
 ) -> list[dict[str, Any]]:
     needle = (q or "").strip().lower()
     stat = (stat or "").strip().lower()
@@ -247,6 +300,10 @@ def _filter_rows(
             continue
         if hide_gimme and _is_gimme(r, sport):
             continue
+        if side and str(r.get("side") or "over") != side:
+            continue
+        if perfect and (r.get("l10") or 0) < 0.999:
+            continue
         if needle:
             hay = " ".join(
                 str(r.get(k) or "")
@@ -259,35 +316,65 @@ def _filter_rows(
     if view == "value":
         out = _best_value(out)
 
-    out.sort(key=lambda r: (-(r.get("score") or 0), -(r.get("l10") or 0), -(r.get("line") or 0), -(r.get("streak") or 0), r.get("player") or ""))
+    if sort == "streak":
+        out.sort(
+            key=lambda r: (
+                -(r.get("streak") or 0),
+                -(r.get("l10") or 0),
+                -(r.get("score") or 0),
+                r.get("player") or "",
+            )
+        )
+    else:
+        out.sort(
+            key=lambda r: (
+                -(r.get("score") or 0),
+                -(r.get("l10") or 0),
+                -(r.get("streak") or 0),
+                r.get("player") or "",
+            )
+        )
     return out
 
 
 def _is_gimme(row: dict[str, Any], sport: str = "nba") -> bool:
-    """True when L10 is a perfect 100% on the easiest (lowest) threshold."""
+    """True when L10 is 100% on the easiest threshold for that side."""
     prop = row.get("prop")
     line = row.get("line")
     if (row.get("l10") or 0) < 0.999:
         return False
-    lowest = lowest_line(str(prop or ""), sport)
-    if lowest is None:
-        return False
-    return float(line) <= float(lowest) + 1e-9
+    lines = lines_for_sport(sport).get(str(prop or ""))
+    if not lines:
+        lowest = lowest_line(str(prop or ""), sport)
+        if lowest is None:
+            return False
+        return float(line) <= float(lowest) + 1e-9
+    side = row.get("side") or "over"
+    # Easiest over is the lowest line; easiest under is the highest line.
+    edge = max(lines) if side == "under" else min(lines)
+    return abs(float(line) - float(edge)) <= 1e-9
 
 
 def _best_value(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """One row per player+stat: the highest line that already passed filters.
+    """One row per player+stat+side.
 
-    Callers apply min_l10 first (default 70%), so this is 'the highest
-    threshold this player still clears at a strong L10 rate.'
+    Overs: the highest line that already passed filters (default L10 >= 70%).
+    Unders: the lowest line that still clears that rate (harder under).
     """
-    best: dict[tuple[str, str], dict[str, Any]] = {}
+    best: dict[tuple[str, str, str], dict[str, Any]] = {}
     for r in rows:
-        key = (str(r.get("player_id")), str(r.get("prop")))
+        side = str(r.get("side") or "over")
+        key = (str(r.get("player_id")), str(r.get("prop")), side)
         prev = best.get(key)
-        if prev is None or float(r.get("line") or 0) > float(prev.get("line") or 0):
+        line = float(r.get("line") or 0)
+        if prev is None:
             best[key] = r
-        elif float(r.get("line") or 0) == float(prev.get("line") or 0) and (r.get("score") or 0) > (prev.get("score") or 0):
+            continue
+        prev_line = float(prev.get("line") or 0)
+        better = line < prev_line if side == "under" else line > prev_line
+        if better:
+            best[key] = r
+        elif line == prev_line and (r.get("score") or 0) > (prev.get("score") or 0):
             best[key] = r
     return list(best.values())
 

@@ -23,6 +23,11 @@ LINES_BY_SPORT: dict[str, dict[str, list[float]]] = {
         "assists": [2, 4, 6, 8],
         "threes": [1, 2, 3, 4],
         "pra": [15, 20, 25, 30],
+        "pts_reb": [15, 20, 25, 30],
+        "pts_ast": [12, 16, 20, 25],
+        "reb_ast": [6, 8, 10, 12],
+        "steals": [0.5, 1.5, 2.5],
+        "blocks": [0.5, 1.5, 2.5],
     },
     "nhl": {
         "goals": [0.5, 1.5],
@@ -42,11 +47,33 @@ PROP_LABELS = {
     "assists": "AST",
     "threes": "3PM",
     "pra": "PRA",
+    "pts_reb": "PTS+REB",
+    "pts_ast": "PTS+AST",
+    "reb_ast": "REB+AST",
+    "steals": "STL",
+    "blocks": "BLK",
     "goals": "G",
     "shots": "SOG",
     "saves": "SV",
     "blocked": "BLK",
     "hits": "HIT",
+}
+
+# Longer names used on the player-detail header, Slipscore-style.
+PROP_FULL_LABELS = {
+    "points": "Points",
+    "rebounds": "Rebounds",
+    "assists": "Assists",
+    "threes": "Three Pointers Made",
+    "pra": "Points Rebounds Assists",
+    "pts_reb": "Points Rebounds",
+    "pts_ast": "Points Assists",
+    "reb_ast": "Rebounds Assists",
+    "steals": "Steals",
+    "blocks": "Blocks",
+    "goals": "Goals",
+    "shots": "Shots on Goal",
+    "saves": "Saves",
 }
 
 
@@ -78,10 +105,33 @@ def get_lines(player: dict, prop: str, sport: str = "nba") -> list[float]:
     return list(lines_for_sport(sport).get(prop, []))
 
 
-def line_label(prop: str, line: float) -> str:
+def display_line(line: float) -> float:
+    """Sportsbook-style half line for an over-threshold.
+
+    Hitting an integer threshold of 25 (value >= 25) is the same as
+    Over 24.5. Half-lines already in the table (0.5, 1.5, …) stay put.
+    """
+    value = float(line)
+    if value.is_integer():
+        return value - 0.5
+    return value
+
+
+def format_line_number(line: float) -> str:
+    shown = display_line(line)
+    if float(shown).is_integer():
+        return str(int(shown))
+    return str(shown)
+
+
+def line_label(prop: str, line: float, side: str = "over") -> str:
     short = PROP_LABELS.get(prop, prop.upper())
-    number = int(line) if float(line).is_integer() else line
-    return f"{short} {number}+"
+    word = "Under" if side == "under" else "Over"
+    return f"{short} {word} {format_line_number(line)}"
+
+
+def prop_full_label(prop: str) -> str:
+    return PROP_FULL_LABELS.get(prop, PROP_LABELS.get(prop, prop.upper()))
 
 
 def _fetch_odds_api_lines(
