@@ -29,7 +29,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from datetime import date as date_cls
 
-from .odds import PROP_LABELS, get_lines, line_label, display_line, prop_full_label
+from .odds import PROP_LABELS, get_offers, line_label, prop_full_label
 from .sports.base import Game, GameLog, Player
 
 MIN_GAMES = 5
@@ -118,6 +118,10 @@ class PropRow:
     opp_def_stat: str = ""
     matchup_tag: str = ""
     without: list[dict] = field(default_factory=list)
+    line_source: str = "standard"
+    american_odds: int | None = None
+    book: str = ""
+    book_title: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -272,13 +276,15 @@ def rank_player_props(
         "team_abbr": player.team_abbr,
     }
     for prop in props:
-        for line in get_lines(player_payload, prop, sport=sport):
-            shown = display_line(line)
+        for offer in get_offers(player_payload, prop, sport=sport):
+            line = offer.line
+            shown = offer.display_line
             l5_avg = round(_avg(_window(played, 5), prop), 2)
             l10_avg = round(_avg(_window(played, 10), prop), 2)
             season_avg = round(_avg(played, prop), 2)
             h2h_avg = round(_avg(h2h_logs, prop), 2) if h2h_logs else 0.0
             for side in ("over", "under"):
+                price = offer.price_for(side)
                 l5_r, l5_h, l5_n = _hit_rate(_window(played, 5), prop, line, side)
                 l10_r, l10_h, l10_n = _hit_rate(_window(played, 10), prop, line, side)
                 l20_r, l20_h, l20_n = _hit_rate(_window(played, 20), prop, line, side)
@@ -310,7 +316,7 @@ def rank_player_props(
                         prop_full=prop_full_label(prop),
                         line=line,
                         display_line=shown,
-                        line_label=line_label(prop, line, side),
+                        line_label=line_label(prop, line, side, price=price, source=offer.source),
                         side=side,
                         l5=round(l5_r, 4),
                         l10=round(l10_r, 4),
@@ -355,6 +361,10 @@ def rank_player_props(
                         injury_detail=player.injury_detail,
                         position=player.position,
                         headshot=player.headshot,
+                        line_source=offer.source,
+                        american_odds=price,
+                        book=offer.book,
+                        book_title=offer.book_title,
                     )
                 )
     return rows

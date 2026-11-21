@@ -33,8 +33,18 @@ rebuild while the app is asleep, upgrade or hit `POST /api/refresh`.
 5. On iPhone: Safari → Share → **Add to Home Screen**. On Android:
    Chrome → menu → **Install app** / **Add to Home Screen**.
 
-Optional: in the Render service’s Environment tab, set `REFRESH_TOKEN`
-to a secret string. Then a rebuild is:
+Optional: in the Render service’s Environment tab, set `ODDS_API_KEY`
+to your Odds API key if you want live US sportsbook lines. Paste it only
+in Render’s env UI — do not put it in the repo. The app works without
+it (standard thresholds). Render’s free disk is wiped when the service
+sleeps, so boot-time board generation will **not** call the Odds API
+(that would re-spend the daily credit budget on every wake). Use
+**Manual Deploy** plus a later `POST /api/refresh` (or the 10:00 AM ET
+job if the service is awake) to pull lines, subject to the daily cap.
+Set `ODDS_FETCH_ON_BOOT=1` only if you accept spending up to 15 credits
+on each cold start.
+
+Optional: also set `REFRESH_TOKEN` to a secret string. Then a rebuild is:
 
 ```bash
 curl -X POST https://YOUR-APP.onrender.com/api/refresh \

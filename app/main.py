@@ -24,6 +24,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.board_store import STORE, available_dates, resolve_date, today_et
+from propscore.odds import odds_status
 
 ET = ZoneInfo("America/New_York")
 ROOT = Path(__file__).resolve().parent.parent
@@ -42,7 +43,7 @@ log = logging.getLogger("propscore")
 _refresh_lock = threading.Lock()
 _refresh_state: dict = {"running": False, "last": None, "error": None}
 
-app = FastAPI(title="Da Real Big Homie Props", version="1.2.0", docs_url="/api/docs", redoc_url=None)
+app = FastAPI(title="Da Real Big Homie Props", version="1.3.0", docs_url="/api/docs", redoc_url=None)
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
 
@@ -79,8 +80,9 @@ def health():
         "nba_dates": available_dates("nba"),
         "nhl_dates": available_dates("nhl"),
         "refresh": _refresh_state,
-        "features": "trends-v2",
+        "features": "odds-v1",
         "app": "Da Real Big Homie Props",
+        "odds": odds_status(),
     }
 
 
@@ -110,6 +112,7 @@ def board(
     side: str = Query("", pattern="^(|over|under)$"),
     perfect: bool = False,
     sort: str = Query("score", pattern="^(score|streak)$"),
+    min_odds: Optional[int] = Query(None, ge=-500, le=500),
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=50),
 ):
@@ -128,6 +131,7 @@ def board(
         side=side,
         perfect=perfect,
         sort=sort,
+        min_odds=min_odds,
         page=page,
         page_size=page_size,
     )
@@ -172,10 +176,12 @@ def refresh(
     return {"ok": True, "status": "started", "sports": sports, "date": date or today_et()}
 
 
-def _run_one_sport(sport: str, date: Optional[str]) -> None:
+def _run_one_sport(sport: str, date: Optional[str], skip_odds: bool = False) -> None:
     cmd = [sys.executable, str(ROOT / "run.py"), sport]
     if date:
         cmd.extend(["--date", date])
+    if skip_odds:
+        cmd.append("--skip-odds")
     log.info("Refreshing board: %s", " ".join(cmd))
     proc = subprocess.run(
         cmd,
@@ -189,7 +195,7 @@ def _run_one_sport(sport: str, date: Optional[str]) -> None:
         raise RuntimeError(proc.stderr[-2000:] or proc.stdout[-2000:] or f"exit {proc.returncode}")
 
 
-def _run_refresh_sports(sports: list[str], date: Optional[str]) -> None:
+def _run_refresh_sports(sports: list[str], date: Optional[str], skip_odds: bool = False) -> None:
     if not _refresh_lock.acquire(blocking=False):
         return
     _refresh_state["running"] = True
@@ -197,7 +203,7 @@ def _run_refresh_sports(sports: list[str], date: Optional[str]) -> None:
     started = datetime.now(ET)
     try:
         for sport in sports:
-            _run_one_sport(sport, date)
+            _run_one_sport(sport, date, skip_odds=skip_odds)
         _refresh_state["last"] = datetime.now(ET).strftime("%Y-%m-%d %I:%M %p ET")
         log.info("Refresh finished in %ss", int((datetime.now(ET) - started).total_seconds()))
     except Exception as exc:
@@ -233,7 +239,15 @@ def on_startup() -> None:
     missing = [s for s in AVAILABLE_SPORTS if today_et() not in available_dates(s)]
     if missing and not _refresh_state["running"]:
         log.info("No board for today (%s) in %s; generating in the background", today_et(), ", ".join(missing))
-        threading.Thread(target=_run_refresh_sports, args=(missing, None), daemon=True).start()
+        # Render's free disk is wiped on every sleep/restart. Auto-fetching
+        # odds on boot would re-spend the daily credit budget each wake.
+        # Manual and scheduled refresh still fetch (subject to the cap).
+        on_render = bool(os.environ.get("RENDER"))
+        fetch_on_boot = os.environ.get("ODDS_FETCH_ON_BOOT", "").strip().lower() in {"1", "true", "yes"}
+        skip_odds = on_render and not fetch_on_boot
+        threading.Thread(
+            target=_run_refresh_sports, args=(missing, None, skip_odds), daemon=True
+        ).start()
 
 
 # --- static PWA assets (after API routes) ---

@@ -9,6 +9,7 @@
     game: "",
     q: "",
     minL10: 0.7,
+    minOdds: null,
     hideOut: true,
     hideGimme: false,
     viewValue: true,
@@ -126,6 +127,7 @@
     p.set("view", state.viewValue ? "value" : "all");
     p.set("perfect", state.perfect ? "true" : "false");
     p.set("sort", state.sortStreak ? "streak" : "score");
+    if (state.minOdds != null) p.set("min_odds", String(state.minOdds));
     p.set("page", String(page));
     p.set("page_size", "25");
     return `/api/${state.sport}/board?${p.toString()}`;
@@ -248,7 +250,7 @@
         </div>
         <span class="side ${over ? "" : "under"}">${over ? "Over" : "Under"}</span>
       </div>
-      <div class="market">${escapeHtml(row.line_label)}</div>
+      <div class="market">${escapeHtml(row.line_label)}${row.book_title && row.line_source === "live" ? ` · ${escapeHtml(row.book_title)}` : ""}${row.line_source === "standard" ? `<span class="std-badge">standard</span>` : ""}</div>
       <div class="rates-grid">${windows}</div>
       ${streaks.length ? `<div class="streaks">${streaks.map(escapeHtml).join(" · ")}</div>` : ""}
       ${chips.length ? `<div class="chips">${chips.map((c) => `<span class="chip">${escapeHtml(c)}</span>`).join("")}</div>` : ""}
@@ -636,6 +638,19 @@
     });
     $("min-l10").addEventListener("change", () => {
       state.minL10 = Number($("min-l10").value) / 100;
+      loadBoard();
+    });
+    function oddsLabel(v) {
+      const n = Number(v);
+      if (n <= -200) return "any";
+      return n > 0 ? `+${n}` : String(n);
+    }
+    $("min-odds").addEventListener("input", () => {
+      $("odds-label").textContent = oddsLabel($("min-odds").value);
+    });
+    $("min-odds").addEventListener("change", () => {
+      const n = Number($("min-odds").value);
+      state.minOdds = n <= -200 ? null : n;
       loadBoard();
     });
     $("more").addEventListener("click", () => {

@@ -96,16 +96,31 @@ NHL standard over-thresholds:
 Skaters need 5 games and about 10 minutes average TOI; goalies need 5 starts.
 ESPN skater game logs do not include hits or blocked shots, so those props are omitted.
 
-Lines are **standard over-thresholds**, not sportsbook numbers:
+If `ODDS_API_KEY` is set, The Odds API supplies today's US sportsbook
+lines (region `us`) for the main markets: NBA points, rebounds, assists,
+threes, and PRA; NHL shots, points, and goalie saves — in that priority
+order. Cards show the book and American odds, e.g. `PTS Over 21.5 (-130)`.
+A **Min odds** slider filters juicy live prices (standard-threshold rows
+are left alone).
+
+The free Starter plan is 500 credits/month. Event-odds cost is
+(markets returned) × (regions). We use one region and cache the slate
+to `cache/odds/` so restarts on the same disk do not refetch. A daily
+budget (default 15 credits) and a reserve (default 30) stop fetching
+when the month is tight. That is enough for about two NBA markets on a
+6-game night; it is **not** enough for every NBA and NHL market every
+day, so NBA is filled first. Props without a live line keep the
+standard thresholds below and are marked **standard**.
+
+The app runs fine with no key. Never commit the key or put it in a file.
+
+Standard-threshold fallbacks:
 
 - Points: 10+ / 15+ / 20+ / 25+
 - Rebounds: 4+ / 6+ / 8+ / 10+
 - Assists: 2+ / 4+ / 6+ / 8+
 - Threes made: 1+ / 2+ / 3+ / 4+
 - PRA: 15+ / 20+ / 25+ / 30+
-
-To swap in live odds later, set `ODDS_API_KEY` and fill in the hook in
-`propscore/odds.py`.
 
 ## Trend score
 
@@ -131,7 +146,7 @@ app/main.py             # FastAPI server + PWA
 app/board_store.py      # filters, best-value view, pagination
 app/static/             # mobile SPA, manifest, service worker
 propscore/ranking.py    # shared scoring
-propscore/odds.py       # standard lines + ODDS_API_KEY stub
+propscore/odds.py       # Odds API lines (budgeted) + standard fallback
 propscore/sports/nba.py # NBA slate, rosters, logs, injuries
 propscore/sports/nhl.py # NHL slate, rosters, logs, injuries
 output/                 # generated boards

@@ -293,3 +293,11 @@ table.box tr.miss td:first-child { color: var(--miss); }
   border-radius: 999px; padding: 8px 14px; font-size: 13px; z-index: 40;
 }
 .soon-msg { padding: 24px 14px; color: var(--muted); text-align: center; }
+
+.std-badge {
+  display: inline-block; margin-left: 8px; font-size: 10px; font-weight: 800;
+  letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--muted); border: 1px solid var(--line); border-radius: 999px;
+  padding: 2px 7px; vertical-align: middle;
+}
+.market { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }

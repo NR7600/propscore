@@ -38,6 +38,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("sport", help="Sport to build (nba is implemented first).")
     parser.add_argument("--date", help="Slate date YYYY-MM-DD in America/New_York. Defaults to today.")
     parser.add_argument("--no-cache", action="store_true", help="Ignore cached ESPN responses.")
+    parser.add_argument(
+        "--skip-odds",
+        action="store_true",
+        help="Do not call The Odds API (still uses a same-day cache if one exists).",
+    )
     parser.add_argument("--workers", type=int, default=6, help="Parallel gamelog fetches.")
     return parser.parse_args()
 
@@ -97,6 +102,17 @@ def main() -> int:
 
     from propscore.context import attach_defense, attach_without_splits, games_with_context
     from propscore.defense import fetch_defense_ranks
+    from propscore.odds import prefetch_slate
+
+    print("Loading player-prop lines (Odds API if a key is set, else standard thresholds)...")
+    odds_report = prefetch_slate(
+        sport.key,
+        date,
+        games,
+        cache_dir=ROOT / "cache" / "odds",
+        skip_fetch=args.skip_odds,
+    )
+    # CACHE_DIR is cache/{sport}/{date}; odds live at cache/odds/.
 
     qual = getattr(sport, "qualification", None)
     rows = rank_slate(
@@ -114,6 +130,13 @@ def main() -> int:
     game_payloads = games_with_context(games, players)
     qualified = {r.player_id for r in rows}
     print(f"Ranked {len(rows)} prop lines across {len(qualified)} players.")
+    live_rows = sum(1 for r in rows if getattr(r, "line_source", "") == "live")
+    print(
+        f"Live sportsbook lines on {live_rows} ranked rows "
+        f"(odds report: spent {odds_report.get('credits_spent', 0)}, "
+        f"remaining {odds_report.get('remaining')}, "
+        f"cached={odds_report.get('cached')})."
+    )
 
     notes = []
     if sport.key == "nhl":
@@ -124,10 +147,13 @@ def main() -> int:
             "Goalie logs include starts and saves."
         )
         notes.append(
-            "Lines are standard over- and under-thresholds (G 0.5/1.5, A 0.5/1.5, "
-            "PTS 0.5/1.5/2.5, SOG 1.5/2.5/3.5/4.5, SV 20.5/25.5/30.5). Skaters need "
-            "5 games and ~10 minutes TOI; goalies need 5 starts. Set ODDS_API_KEY "
-            "later to swap in sportsbook lines."
+            "When ODDS_API_KEY is set, main NHL markets (SOG, points, saves) use "
+            "US sportsbook lines from The Odds API (region=us), cached for the day "
+            "and capped at a small daily credit budget. Missing lines fall back to "
+            "standard thresholds (G 0.5/1.5, A 0.5/1.5, PTS 0.5/1.5/2.5, "
+            "SOG 1.5/2.5/3.5/4.5, SV 20.5/25.5/30.5), marked as standard. "
+            "Skaters need 5 games and ~10 minutes TOI; goalies need 5 starts. "
+            "The app runs without a key."
         )
         notes.append(
             "Opponent defense is team goals allowed from ESPN standings (not "
@@ -139,6 +165,7 @@ def main() -> int:
             "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/teams/{id}/roster",
             "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/injuries",
             "https://site.web.api.espn.com/apis/common/v3/sports/hockey/nhl/athletes/{id}/gamelog",
+            "https://api.the-odds-api.com/v4/sports/icehockey_nhl/events (free); /events/{id}/odds (credits)",
         ]
     else:
         notes.append(
@@ -146,10 +173,11 @@ def main() -> int:
             "cdn.nba.com returned 403 and stats.nba.com timed out from this environment."
         )
         notes.append(
-            "No free odds feed is wired in; lines are standard over- and under-thresholds "
-            "(PTS 10/15/20/25, REB 4/6/8/10, AST 2/4/6/8, 3PM 1/2/3/4, PRA 15/20/25/30, "
-            "PTS+REB, PTS+AST, REB+AST, STL/BLK 0.5/1.5/2.5). Displayed as half-lines "
-            "(25+ is Over/Under 24.5). Set ODDS_API_KEY later to swap in sportsbook lines."
+            "When ODDS_API_KEY is set, main NBA markets (PTS, REB, AST, 3PM, PRA) use "
+            "US sportsbook lines from The Odds API (region=us), cached for the day "
+            "and capped at a small daily credit budget (NBA first). Missing lines "
+            "fall back to standard thresholds, marked as standard, and displayed "
+            "as half-lines (25+ is Over/Under 24.5). The app runs without a key."
         )
         notes.append(
             "Opponent defense is team points allowed from ESPN standings (not "
@@ -161,6 +189,7 @@ def main() -> int:
             "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/{id}/roster",
             "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries",
             "https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/athletes/{id}/gamelog",
+            "https://api.the-odds-api.com/v4/sports/basketball_nba/events (free); /events/{id}/odds (credits)",
         ]
     if failed:
         notes.append(f"Game logs failed for {len(failed)} player(s).")

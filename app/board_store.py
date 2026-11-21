@@ -31,6 +31,10 @@ ROW_FIELDS = (
     "display_line",
     "line_label",
     "side",
+    "line_source",
+    "american_odds",
+    "book",
+    "book_title",
     "l5",
     "l10",
     "l20",
@@ -166,6 +170,7 @@ class BoardStore:
         side: str = "",
         perfect: bool = False,
         sort: str = "score",
+        min_odds: int | None = None,
         page: int = 1,
         page_size: int = 25,
     ) -> dict[str, Any]:
@@ -183,6 +188,7 @@ class BoardStore:
             side=side,
             perfect=perfect,
             sort=sort,
+            min_odds=min_odds,
         )
         page = max(1, page)
         page_size = min(max(1, page_size), 50)
@@ -211,6 +217,7 @@ class BoardStore:
                 "side": side or "",
                 "perfect": perfect,
                 "sort": sort or "score",
+                "min_odds": min_odds,
             },
             "page": page,
             "page_size": page_size,
@@ -284,6 +291,7 @@ def _filter_rows(
     side: str = "",
     perfect: bool = False,
     sort: str = "score",
+    min_odds: int | None = None,
 ) -> list[dict[str, Any]]:
     needle = (q or "").strip().lower()
     stat = (stat or "").strip().lower()
@@ -304,6 +312,10 @@ def _filter_rows(
             continue
         if perfect and (r.get("l10") or 0) < 0.999:
             continue
+        if min_odds is not None and r.get("line_source") == "live":
+            price = r.get("american_odds")
+            if price is None or int(price) < int(min_odds):
+                continue
         if needle:
             hay = " ".join(
                 str(r.get(k) or "")
@@ -341,6 +353,8 @@ def _is_gimme(row: dict[str, Any], sport: str = "nba") -> bool:
     """True when L10 is 100% on the easiest threshold for that side."""
     prop = row.get("prop")
     line = row.get("line")
+    if row.get("line_source") == "live":
+        return False
     if (row.get("l10") or 0) < 0.999:
         return False
     lines = lines_for_sport(sport).get(str(prop or ""))
