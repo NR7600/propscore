@@ -3,10 +3,8 @@
 A Slipscore-style player prop research app (the code and repo are still named `propscore`). It pulls tonight’s NBA or NHL slate,
 recent game logs, and injury tags, then ranks standard over **and** under
 lines by trend strength. Each Over/Under tab leads with a ranked Top 10
-(one best trend per player, live sportsbook lines preferred). An NBA
-First Basket tab (and NHL First Goal) is built from ESPN play-by-play:
-who scored each team’s first basket or goal, X/Y games, streak, starter,
-and opening-tip / opening-faceoff win rate. Compact PBP extracts are
+(one best trend per player, live sportsbook lines preferred). NBA First FGM (the 1FG chip) and NHL First Goal are built from ESPN play-by-play:
+the first field goal or goal of the game (free throws do not count). Compact PBP extracts are
 cached and only new games are fetched. The player page shows that player’s
 best few props (max one line per stat, about 4–6), with extra lines behind
 a toggle, plus a hit/miss bar chart, box score, both-team injuries, and

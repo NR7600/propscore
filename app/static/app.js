@@ -13,7 +13,7 @@
     stat: "",
     game: "",
     q: "",
-    minL10: 0.7,
+    minL10: 0,
     minOdds: null,
     hideOut: true,
     hideGimme: false,
@@ -125,18 +125,13 @@
     if (state.stat) p.set("stat", state.stat);
     if (state.game) p.set("game", state.game);
     if (state.q) p.set("q", state.q);
-    if (state.tab === "first") {
-      p.set("tab", "first_score");
-    } else if (state.side) {
-      p.set("side", state.side);
-    }
-    p.set("min_l10", String(state.tab === "first" ? 0 : state.minL10));
+    if (state.side) p.set("side", state.side);
+    p.set("min_l10", "0");
     p.set("hide_out", state.hideOut ? "true" : "false");
     p.set("hide_gimme", state.hideGimme ? "true" : "false");
     p.set("view", state.viewValue ? "value" : "all");
     p.set("perfect", state.perfect ? "true" : "false");
     p.set("sort", state.sortStreak ? "streak" : "score");
-    if (state.minOdds != null) p.set("min_odds", String(state.minOdds));
     p.set("page", String(page));
     p.set("page_size", "25");
     return `/api/${state.sport}/board?${p.toString()}`;
@@ -174,18 +169,15 @@
       }
       if (append) state.rows = state.rows.concat(data.rows || []);
       else state.rows = data.rows || [];
-      const first = !!data.first_mode;
-      const firstLabel = state.sport === "nhl" ? "First Goal" : "First Basket";
-      const firstTab = $("first-tab");
-      if (firstTab) firstTab.textContent = firstLabel;
+      const first = !!data.first_mode || state.stat === "first_basket" || state.stat === "first_goal";
+      const firstLabel = state.sport === "nhl" ? "First Goal" : "First FGM";
       $("board-view").classList.toggle("first-mode", first);
-      $("date-line").textContent = data.stale
-        ? `Showing ${data.date} • Ranked by trend strength`
-        : `Updated ${data.date} • Ranked by trend strength`;
+      $("date-line").textContent = "Updated Daily • Ranked By Trend Strength";
       $("view-note").textContent = data.view_label || "";
       const topTitle = first ? `Top 10 ${firstLabel}` : "Top 10 Trends";
       $("top-title").textContent = topTitle;
-      $("more-title").textContent = first ? `More ${firstLabel.toLowerCase()} trends` : "More trends";
+      $("more-title").textContent = first ? `More ${firstLabel} trends` : "More trends";
+      state.slateMessage = data.slate_message || "";
       renderGames();
       renderStatPills();
       renderTop();
@@ -195,13 +187,16 @@
       $("count").textContent = topCount
         ? `Top ${topCount}${moreCount ? ` · ${moreCount} more` : ""}`
         : `${moreCount} trends`;
-      $("empty").hidden = topCount > 0 || moreCount > 0;
+      const emptyEl = $("empty");
+      const hasRows = topCount > 0 || moreCount > 0;
+      emptyEl.hidden = hasRows;
+      emptyEl.textContent = hasRows ? "No props match these filters." : (state.slateMessage || "No props match these filters.");
       $("top-wrap").hidden = topCount === 0;
       $("show-more-trends").hidden = moreCount === 0 || state.moreOpen;
       $("show-more-trends").textContent = `Show more trends (${moreCount})`;
       if (!append) $("more-block").hidden = !state.moreOpen;
       $("more").hidden = !state.moreOpen || !data.has_more;
-      $("gimme-wrap").hidden = first || !(state.viewValue === false && state.minL10 < 0.99);
+      $("gimme-wrap").hidden = first || state.viewValue !== false;
       $("status").textContent = "";
     } catch (err) {
       $("status").textContent = err.message || "Could not load the board.";
@@ -212,7 +207,7 @@
 
   function renderGames() {
     const host = $("games");
-    const chips = [`<button type="button" class="game-chip ${state.game ? "" : "on"}" data-game="">All games</button>`];
+    const chips = [`<span class="smart-label">Games:</span>`,`<button type="button" class="game-chip ${state.game ? "" : "on"}" data-game="">All games</button>`];
     for (const g of state.games) {
       const label = g.label || `${g.away_abbr} @ ${g.home_abbr}`;
       const on = state.game === String(g.event_id) ? "on" : "";
@@ -223,7 +218,14 @@
 
   function renderStatPills() {
     const host = $("stats");
-    const items = [{ key: "", label: "All Stats" }, ...(state.props || [])];
+    const firstKey = state.sport === "nhl" ? "first_goal" : "first_basket";
+    const firstLabel = state.sport === "nhl" ? "1G (First Goal)" : "1FG (First Basket)";
+    const allLabel = state.sport === "nhl" ? "All Stats (No 1G)" : "All Stats (No 1FG)";
+    const items = [
+      { key: "", label: allLabel },
+      { key: firstKey, label: firstLabel },
+      ...(state.props || []),
+    ];
     host.innerHTML = items
       .map((p) => {
         const key = p.key || "";
@@ -254,17 +256,22 @@
   function cardHTML(row, rank, featured) {
     const first = row.prop === "first_basket" || row.prop === "first_goal" || row.first_kind;
     const over = (row.side || "over") === "over";
-    const windows = [
-      [row.l5_hits, row.l5_games, row.l5],
-      [row.l10_hits, row.l10_games, row.l10],
-      [row.l20_hits, row.l20_games, row.l20],
-    ]
-      .filter((w) => w[1])
-      .map(([h, n, r]) => {
-        const cls = r >= 0.999 ? "" : r >= 0.7 ? "" : "muted";
-        return `<div class="rate ${cls}">${frac(h, n)} games <b>${pct(r)}%</b></div>`;
-      })
-      .join("");
+    const cell = (h, n, r) => {
+      if (!n) return `<div class="rate muted">—</div>`;
+      const cls = r >= 0.999 ? "" : r >= 0.7 ? "" : "muted";
+      return `<div class="rate ${cls}">${frac(h, n)} games <b>${pct(r)}%</b></div>`;
+    };
+    const leftCol = [
+      cell(row.l4_hits, row.l4_games, row.l4),
+      cell(row.l8_hits, row.l8_games, row.l8),
+      cell(row.l15_hits, row.l15_games, row.l15),
+    ].join("");
+    const rightCol = [
+      cell(row.l5_hits, row.l5_games, row.l5),
+      cell(row.l10_hits, row.l10_games, row.l10),
+      cell(row.l20_hits, row.l20_games, row.l20),
+    ].join("");
+    const windows = `<div class="rates-col">${leftCol}</div><div class="rates-col">${rightCol}</div>`;
     const streaks = [];
     if (row.streak) streaks.push(`${row.streak}x game streak`);
     if (row.home_streak) streaks.push(`${row.home_streak}x home streak`);
@@ -308,6 +315,7 @@
       ${chips.length ? `<div class="chips">${chips.map((c) => `<span class="chip">${escapeHtml(c)}</span>`).join("")}</div>` : ""}
       <div class="card-foot">
         <button type="button" class="view-log" data-open="${row.player_id}">VIEW GAME LOG</button>
+        <button type="button" class="full-hist" data-open="${row.player_id}">full history &gt;</button>
         <button type="button" class="add-slip" data-slip="${encodeURIComponent(JSON.stringify({
           id: slipId(row),
           player: row.player,
@@ -677,8 +685,8 @@
     document.querySelectorAll(".trend-tab").forEach((btn) => {
       btn.addEventListener("click", () => {
         const tab = btn.dataset.tab || (btn.dataset.side ? (btn.dataset.side || "all") : "all");
-        state.tab = tab === "first" ? "first" : tab;
-        state.side = tab === "first" ? "" : (btn.dataset.side || "");
+        state.tab = tab;
+        state.side = btn.dataset.side || "";
         document.querySelectorAll(".trend-tab").forEach((b) => b.classList.toggle("on", b === btn));
         loadBoard();
       });
@@ -717,26 +725,6 @@
     });
     $("hide-gimme").addEventListener("change", () => {
       state.hideGimme = $("hide-gimme").checked;
-      loadBoard();
-    });
-    $("min-l10").addEventListener("input", () => {
-      $("min-label").textContent = `${$("min-l10").value}%`;
-    });
-    $("min-l10").addEventListener("change", () => {
-      state.minL10 = Number($("min-l10").value) / 100;
-      loadBoard();
-    });
-    function oddsLabel(v) {
-      const n = Number(v);
-      if (n <= -200) return "any";
-      return n > 0 ? `+${n}` : String(n);
-    }
-    $("min-odds").addEventListener("input", () => {
-      $("odds-label").textContent = oddsLabel($("min-odds").value);
-    });
-    $("min-odds").addEventListener("change", () => {
-      const n = Number($("min-odds").value);
-      state.minOdds = n <= -200 ? null : n;
       loadBoard();
     });
     $("more").addEventListener("click", () => {

@@ -44,9 +44,10 @@ def write_json(
         "sources": sources,
         "formula": {
             "description": (
-                "Trend score is a 0-100 weighted blend of L5 (30%), L10 (25%), "
-                "L20 (15%), season (10%), and same-venue (10%) hit rates, plus "
-                f"10% from min(current hit streak, {STREAK_CAP})/{STREAK_CAP}."
+                "Trend score is a 0-100 blend of window hit rates and streaks: "
+                "L4 16%, L5 16%, L8 14%, L10 14%, L15 10%, L20 10%, "
+                f"game streak 10% (capped at {STREAK_CAP}), and the matching "
+                "home or away streak 10%. Live/standard odds are not in the score."
             ),
             "weights": WEIGHTS,
             "streak_cap": STREAK_CAP,

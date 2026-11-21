@@ -22,9 +22,14 @@ class Game:
     def label(self) -> str:
         return f"{self.away_abbr} @ {self.home_abbr}"
 
+    def vs_label(self) -> str:
+        # Slipscore-style "PHI vs MIL" (home vs away).
+        return f"{self.home_abbr} vs {self.away_abbr}"
+
     def to_dict(self) -> dict:
         d = asdict(self)
-        d["label"] = self.label()
+        d["label"] = self.vs_label()
+        d["away_at_home"] = self.label()
         return d
 
 

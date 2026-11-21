@@ -181,6 +181,7 @@ class NHL:
             SCOREBOARD_URL,
             params={"dates": yyyymmdd},
             cache_key=f"nhl_scoreboard_{yyyymmdd}",
+            use_cache=False,
         )
         games: list[Game] = []
         for event in data.get("events") or []:

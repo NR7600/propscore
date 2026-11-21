@@ -6,13 +6,18 @@ A weighted blend of hit rates and the current hit streak, using only
 games the player actually played (minutes > 0):
 
     score = 100 * (
-        0.30 * L5 hit rate
-      + 0.25 * L10 hit rate
-      + 0.15 * L20 hit rate
-      + 0.10 * season hit rate
-      + 0.10 * venue hit rate      # home or away, matching tonight
-      + 0.10 * min(hit streak, 5) / 5
+        0.16 * L4 hit rate
+      + 0.16 * L5 hit rate
+      + 0.14 * L8 hit rate
+      + 0.14 * L10 hit rate
+      + 0.10 * L15 hit rate
+      + 0.10 * L20 hit rate
+      + 0.10 * min(game streak, 5) / 5
+      + 0.10 * min(venue streak, 5) / 5   # home streak tonight if home, else away
     )
+
+Odds and live/standard line source are never part of the score or the
+sort key. Cards may still display a sportsbook price when one exists.
 
 Hit rate in a window uses however many played games exist if the
 player has fewer than 5/10/20. Venue rate falls back to the season
@@ -37,12 +42,14 @@ MIN_AVG_MINUTES = 12.0
 
 # Must sum to 1.0.
 WEIGHTS = {
-    "l5": 0.30,
-    "l10": 0.25,
-    "l20": 0.15,
-    "season": 0.10,
-    "venue": 0.10,
+    "l4": 0.16,
+    "l5": 0.16,
+    "l8": 0.14,
+    "l10": 0.14,
+    "l15": 0.10,
+    "l20": 0.10,
     "streak": 0.10,
+    "venue_streak": 0.10,
 }
 STREAK_CAP = 5
 VENUE_MIN_GAMES = 3
@@ -122,6 +129,15 @@ class PropRow:
     american_odds: int | None = None
     book: str = ""
     book_title: str = ""
+    l4: float = 0.0
+    l8: float = 0.0
+    l15: float = 0.0
+    l4_hits: int = 0
+    l4_games: int = 0
+    l8_hits: int = 0
+    l8_games: int = 0
+    l15_hits: int = 0
+    l15_games: int = 0
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -196,20 +212,24 @@ def _rest(played_newest_first: list[GameLog], slate_date: str) -> tuple[int | No
 
 
 def trend_score(
+    l4: float,
     l5: float,
+    l8: float,
     l10: float,
+    l15: float,
     l20: float,
-    season: float,
-    venue: float,
     streak: int,
+    venue_streak: int,
 ) -> float:
     raw = (
-        WEIGHTS["l5"] * l5
+        WEIGHTS["l4"] * l4
+        + WEIGHTS["l5"] * l5
+        + WEIGHTS["l8"] * l8
         + WEIGHTS["l10"] * l10
+        + WEIGHTS["l15"] * l15
         + WEIGHTS["l20"] * l20
-        + WEIGHTS["season"] * season
-        + WEIGHTS["venue"] * venue
         + WEIGHTS["streak"] * min(streak, STREAK_CAP) / STREAK_CAP
+        + WEIGHTS["venue_streak"] * min(venue_streak, STREAK_CAP) / STREAK_CAP
     )
     return round(100.0 * raw, 1)
 
@@ -285,8 +305,11 @@ def rank_player_props(
             h2h_avg = round(_avg(h2h_logs, prop), 2) if h2h_logs else 0.0
             for side in ("over", "under"):
                 price = offer.price_for(side)
+                l4_r, l4_h, l4_n = _hit_rate(_window(played, 4), prop, line, side)
                 l5_r, l5_h, l5_n = _hit_rate(_window(played, 5), prop, line, side)
+                l8_r, l8_h, l8_n = _hit_rate(_window(played, 8), prop, line, side)
                 l10_r, l10_h, l10_n = _hit_rate(_window(played, 10), prop, line, side)
+                l15_r, l15_h, l15_n = _hit_rate(_window(played, 15), prop, line, side)
                 l20_r, l20_h, l20_n = _hit_rate(_window(played, 20), prop, line, side)
                 sea_r, sea_h, sea_n = _hit_rate(played, prop, line, side)
                 if len(venue_logs) >= VENUE_MIN_GAMES:
@@ -299,7 +322,8 @@ def rank_player_props(
                 streak = _hit_streak(played, prop, line, side)
                 home_streak = _hit_streak(home_logs, prop, line, side)
                 away_streak = _hit_streak(away_logs, prop, line, side)
-                score = trend_score(l5_r, l10_r, l20_r, sea_r, ven_r, streak)
+                venue_streak = home_streak if venue_flag == "H" else away_streak
+                score = trend_score(l4_r, l5_r, l8_r, l10_r, l15_r, l20_r, streak, venue_streak)
                 rows.append(
                     PropRow(
                         player_id=player.id,
@@ -309,7 +333,7 @@ def rank_player_props(
                         opponent=opponent,
                         venue=venue_flag,
                         event_id=game.event_id,
-                        game=game.label(),
+                        game=game.vs_label(),
                         game_time_et=game.start_et,
                         prop=prop,
                         prop_label=PROP_LABELS.get(prop, prop.upper()),
@@ -321,6 +345,15 @@ def rank_player_props(
                         l5=round(l5_r, 4),
                         l10=round(l10_r, 4),
                         l20=round(l20_r, 4),
+                        l4=round(l4_r, 4),
+                        l8=round(l8_r, 4),
+                        l15=round(l15_r, 4),
+                        l4_hits=l4_h,
+                        l4_games=l4_n,
+                        l8_hits=l8_h,
+                        l8_games=l8_n,
+                        l15_hits=l15_h,
+                        l15_games=l15_n,
                         season=round(sea_r, 4),
                         venue_hit=round(ven_r, 4),
                         home_hit=round(home_r, 4),

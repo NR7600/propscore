@@ -50,8 +50,11 @@ PREFERRED_BOOKS = (
 # daily budget.
 MARKETS_BY_SPORT: dict[str, list[tuple[str, str]]] = {
     "nba": [
+        # points + first_basket first so a 6-game slate uses 12 of the
+        # 15-credit daily cap. Rebounds are omitted from the paid fetch
+        # (they still appear as standard or from a leftover cache).
         ("player_points", "points"),
-        ("player_rebounds", "rebounds"),
+        ("player_first_basket", "first_basket"),
         ("player_assists", "assists"),
         ("player_threes", "threes"),
         ("player_points_rebounds_assists", "pra"),
@@ -104,6 +107,8 @@ PROP_LABELS = {
     "saves": "SV",
     "blocked": "BLK",
     "hits": "HIT",
+    "first_basket": "First FGM",
+    "first_goal": "First Goal",
 }
 
 PROP_FULL_LABELS = {
@@ -120,6 +125,8 @@ PROP_FULL_LABELS = {
     "goals": "Goals",
     "shots": "Shots on Goal",
     "saves": "Saves",
+    "first_basket": "First FGM",
+    "first_goal": "First Goal",
 }
 
 TEAM_ALIASES = {

@@ -35,9 +35,18 @@ ROW_FIELDS = (
     "american_odds",
     "book",
     "book_title",
+    "l4",
     "l5",
+    "l8",
     "l10",
+    "l15",
     "l20",
+    "l4_hits",
+    "l4_games",
+    "l8_hits",
+    "l8_games",
+    "l15_hits",
+    "l15_games",
     "season",
     "h2h",
     "venue_hit",
@@ -224,9 +233,9 @@ class BoardStore:
             "stale": data.get("date") != today_et(),
             "view": "first_score" if first_mode else ("value" if view == "value" else "all"),
             "view_label": (
-                "Ranked 1-10 by first-score trend strength (L5/L10/L20/season, "
-                "streak, home/away). Rates are first basket or first goal for "
-                "that player's team."
+                "Ranked 1-10 by trend strength: L4/L5/L8/L10/L15/L20 hit rates "
+                "plus game and home/away streaks. First FGM is the first field "
+                "goal of the game (free throws do not count)."
                 if first_mode
                 else _view_label(view, min_l10)
             ),
@@ -255,6 +264,8 @@ class BoardStore:
             "rows": slice_,
             "first_score_meta": data.get("first_score_meta") or {},
             "first_mode": first_mode,
+            "games_remaining": _games_remaining(data.get("games") or []),
+            "slate_message": _slate_message(data.get("games") or [], first_mode, len(top_out) + total),
         }
 
     def player(self, sport: str, date: str, player_id: str) -> dict[str, Any] | None:
@@ -277,9 +288,9 @@ class BoardStore:
         rows.extend(first_rows)
         # Prefer a score-sorted list so the detail page can pick a default line.
         rows.sort(key=lambda r: (
-            -(1 if r.get("line_source") == "live" else 0),
             -(r.get("score") or 0),
             -(r.get("l10") or 0),
+            -(r.get("streak") or 0),
         ))
         featured, more = _player_featured(rows)
         game = None
@@ -301,13 +312,15 @@ class BoardStore:
 
 
 def _view_label(view: str, min_l10: float) -> str:
-    pct = int(round(min_l10 * 100)) if min_l10 else 70
     if view == "value":
-        return (
-            f"Best value: for each player and stat, the highest line still "
-            f"clearing {pct}% of his last 10 games."
-        )
-    return "All qualifying lines, ranked by trend score."
+        if min_l10 and min_l10 > 0:
+            pct = int(round(min_l10 * 100))
+            return (
+                f"Best value: for each player and stat, the highest line still "
+                f"clearing {pct}% of his last 10 games, ranked by trend strength."
+            )
+        return "Best value: one line per player and stat, ranked by trend strength."
+    return "All qualifying lines, ranked by trend strength."
 
 
 def _is_out(status: str | None) -> bool:
@@ -455,15 +468,13 @@ def _row_id(row: dict[str, Any]) -> tuple:
 
 
 def _trend_key(row: dict[str, Any], first_mode: bool = False) -> tuple:
-    live = 1 if row.get("line_source") == "live" else 0
-    if first_mode:
-        live = 0
+    # Pure trend strength. Odds / live-vs-standard are never a sort key.
     return (
-        live,
         float(row.get("score") or 0),
         float(row.get("l10") or 0),
         int(row.get("streak") or 0),
         float(row.get("l5") or 0),
+        float(row.get("l4") or 0),
         float(row.get("season") or 0),
     )
 
@@ -506,6 +517,33 @@ def _player_featured(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], 
         featured = featured[:FEATURED_CAP]
     extras.sort(key=_trend_key, reverse=True)
     return featured, extras
+
+
+
+def _game_is_final(game: dict[str, Any]) -> bool:
+    status = str(game.get("status") or "").lower()
+    return "final" in status or status in {"post", "completed", "status_final"}
+
+
+def _games_remaining(games: list[dict[str, Any]]) -> int:
+    return sum(1 for g in games if not _game_is_final(g))
+
+
+def _slate_message(games: list[dict[str, Any]], first_mode: bool, row_count: int) -> str:
+    if not first_mode:
+        return ""
+    remaining = _games_remaining(games)
+    if row_count > 0:
+        return ""
+    if remaining > 0:
+        return (
+            "First-basket trends are still generating, or play-by-play "
+            "has not loaded yet. Keep this tab open and refresh in a minute "
+            f"— {remaining} game(s) still on tonight's slate."
+        )
+    if games:
+        return "No games left today. Check back tomorrow for the next slate."
+    return "No games on tonight's slate."
 
 
 

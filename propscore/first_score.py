@@ -1,9 +1,9 @@
-"""First-basket (NBA) and first-goal (NHL) trends from ESPN play-by-play.
+"""First-FGM (NBA) and first-goal (NHL) trends from ESPN play-by-play.
 
-Summaries are large, so only a compact record is written to disk. Later
-runs fetch only event IDs that are not already cached. Callers should
-skip the network path on a Render cold start and let /api/refresh (or
-the daily job) fill the cache.
+NBA "First FGM" is the player who made the first field goal of the
+game (either team). Free throws do not count. NHL is the first goal of
+the game. Summaries are large, so only a compact record is written to
+disk and later runs fetch only uncached event IDs.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 from .http import DEFAULT_HEADERS
+from .odds import get_offers, line_label
 from .ranking import (
     MIN_GAMES,
     STREAK_CAP,
@@ -35,7 +36,10 @@ log = logging.getLogger("propscore.first_score")
 ET = ZoneInfo("America/New_York")
 SEASON_YEAR = 2027
 MIN_FIRST_GAMES = 8
-FETCH_BUDGET_SEC = 180
+# v2 stores the GAME's first field goal (NBA, FTs excluded) or first
+# goal (NHL), not each team's first score. Old compact records are ignored.
+CACHE_SCHEMA = 2
+FETCH_BUDGET_SEC = 240
 WORKERS = 6
 TIMEOUT = 20
 RETRIES = 2
@@ -44,20 +48,20 @@ SPORT_META = {
     "nba": {
         "path": "basketball/nba",
         "prop": "first_basket",
-        "prop_label": "1st Basket",
-        "prop_full": "First Basket",
-        "line_label": "First Basket",
+        "prop_label": "1FG",
+        "prop_full": "First FGM",
+        "line_label": "First FGM Over 0.5",
         "kind": "first_basket",
-        "tab_label": "First Basket",
+        "tab_label": "1FG (First Basket)",
     },
     "nhl": {
         "path": "hockey/nhl",
         "prop": "first_goal",
-        "prop_label": "1st Goal",
+        "prop_label": "1G",
         "prop_full": "First Goal",
-        "line_label": "First Goal",
+        "line_label": "First Goal Over 0.5",
         "kind": "first_goal",
-        "tab_label": "First Goal",
+        "tab_label": "1G (First Goal)",
     },
 }
 
@@ -81,9 +85,14 @@ def load_cached(folder: Path, event_id: str) -> dict[str, Any] | None:
     if not path.exists():
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        rec = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+    if int(rec.get("schema") or 0) < CACHE_SCHEMA:
+        return None
+    if not rec.get("first_fgm"):
+        return None
+    return rec
 
 
 def save_cached(folder: Path, record: dict[str, Any]) -> None:
@@ -192,6 +201,49 @@ def _box_played(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return out
 
 
+
+def _is_free_throw(play: dict[str, Any]) -> bool:
+    typ = _play_type(play).lower()
+    text = str(play.get("text") or "").lower()
+    return "free throw" in typ or "free throw" in text or typ in {"ft", "freethrow"}
+
+
+def _is_made_field_goal(play: dict[str, Any]) -> bool:
+    """True when this play is a made FG (not a free throw)."""
+    if not play.get("scoringPlay"):
+        return False
+    try:
+        value = float(play.get("scoreValue") or 0)
+    except (TypeError, ValueError):
+        value = 0.0
+    if value <= 0:
+        return False
+    if _is_free_throw(play):
+        return False
+    typ = _play_type(play).lower()
+    text = str(play.get("text") or "").lower()
+    if "makes" in text and "free throw" not in text:
+        return True
+    if play.get("shootingPlay") and "free throw" not in typ:
+        return True
+    tokens = ("dunk", "layup", "jumper", "jump shot", "hook", "tip", "alley", "floater")
+    return any(tok in typ or tok in text for tok in tokens)
+
+
+def _is_goal(play: dict[str, Any]) -> bool:
+    if not play.get("scoringPlay"):
+        return False
+    typ = _play_type(play).lower()
+    text = str(play.get("text") or "").lower()
+    if "goal" in typ or typ == "g":
+        return True
+    try:
+        value = float(play.get("scoreValue") or 0)
+    except (TypeError, ValueError):
+        value = 0.0
+    return value > 0 and "goal" in text and "awarded" not in typ
+
+
 def extract_event(data: dict[str, Any], sport: str) -> dict[str, Any] | None:
     header = data.get("header") or {}
     comps = (header.get("competitions") or [{}])[0]
@@ -226,7 +278,21 @@ def extract_event(data: dict[str, Any], sport: str) -> dict[str, Any] | None:
     plays = data.get("plays") or []
     tip_winner_team_id = None
     tip_winner_player_id = None
-    first_scores: dict[str, dict[str, Any]] = {}
+    first_fgm: dict[str, Any] | None = None
+
+    def _scorer_from(play: dict[str, Any]) -> tuple[str | None, str]:
+        parts = play.get("participants") or []
+        scorer_id = None
+        scorer_name = ""
+        for part in parts:
+            if str(part.get("type") or "") in {"scorer", "player"}:
+                scorer_id = _athlete_id(part)
+                scorer_name = _athlete_name(part)
+                break
+        if scorer_id is None and parts:
+            scorer_id = _athlete_id(parts[0])
+            scorer_name = _athlete_name(parts[0])
+        return scorer_id, scorer_name
 
     for play in plays:
         typ = _play_type(play).lower()
@@ -234,8 +300,6 @@ def extract_event(data: dict[str, Any], sport: str) -> dict[str, Any] | None:
             typ.replace(" ", "") in {"jumpball", "jump-ball"} or typ == "jump ball"
         ):
             parts = play.get("participants") or []
-            # ESPN lists the two jumpers first and the player who
-            # gained possession last: "X vs. Y (Z gains possession)".
             text = str(play.get("text") or "")
             gained = None
             if "gains possession" in text.lower() and parts:
@@ -258,40 +322,26 @@ def extract_event(data: dict[str, Any], sport: str) -> dict[str, Any] | None:
                 tip_winner_player_id = winner
                 tip_winner_team_id = team_of[winner]
 
-        if not play.get("scoringPlay"):
-            continue
-        try:
-            value = float(play.get("scoreValue") or 0)
-        except (TypeError, ValueError):
-            value = 0.0
-        if value <= 0:
-            continue
-        tid = _play_team_id(play)
-        if not tid or tid in first_scores:
-            continue
-        parts = play.get("participants") or []
-        scorer_id = None
-        scorer_name = ""
-        for part in parts:
-            if str(part.get("type") or "") in {"scorer", "player"}:
-                scorer_id = _athlete_id(part)
-                scorer_name = _athlete_name(part)
-                break
-        if scorer_id is None and parts:
-            scorer_id = _athlete_id(parts[0])
-            scorer_name = _athlete_name(parts[0])
-        period = play.get("period") or {}
-        clock = play.get("clock") or {}
-        first_scores[tid] = {
-            "player_id": scorer_id,
-            "player_name": scorer_name or name_of.get(scorer_id or "", ""),
-            "period": period.get("number") if isinstance(period, dict) else period,
-            "clock": clock.get("displayValue") if isinstance(clock, dict) else clock,
-            "text": play.get("text") or "",
-            "score_value": value,
-            "started": bool((played.get(scorer_id or "") or {}).get("started")),
-        }
-        if len(first_scores) >= 2:
+        is_nba_fg = sport == "nba" and _is_made_field_goal(play)
+        is_nhl_goal = sport == "nhl" and _is_goal(play)
+        if first_fgm is None and (is_nba_fg or is_nhl_goal):
+            scorer_id, scorer_name = _scorer_from(play)
+            period = play.get("period") or {}
+            clock = play.get("clock") or {}
+            try:
+                value = float(play.get("scoreValue") or 0)
+            except (TypeError, ValueError):
+                value = 0.0
+            first_fgm = {
+                "player_id": scorer_id,
+                "player_name": scorer_name or name_of.get(scorer_id or "", ""),
+                "team_id": _play_team_id(play),
+                "period": period.get("number") if isinstance(period, dict) else period,
+                "clock": clock.get("displayValue") if isinstance(clock, dict) else clock,
+                "text": play.get("text") or "",
+                "score_value": value,
+                "started": bool((played.get(scorer_id or "") or {}).get("started")),
+            }
             break
 
     event_id = str(
@@ -305,9 +355,10 @@ def extract_event(data: dict[str, Any], sport: str) -> dict[str, Any] | None:
         "home_abbr": home["abbr"],
         "away_id": away["id"],
         "away_abbr": away["abbr"],
+        "schema": CACHE_SCHEMA,
         "tip_winner_team_id": tip_winner_team_id,
         "tip_winner_player_id": tip_winner_player_id,
-        "first_scores": first_scores,
+        "first_fgm": first_fgm,
         "played": played,
     }
 
@@ -382,7 +433,7 @@ def _schedule_events(client: Any, sport: str, team_id: str, slate_date: str) -> 
                 )
             except ValueError:
                 date = str(raw)[:10]
-        if date and date >= slate_date:
+        if date and date > slate_date:
             continue
         out.append(eid)
     return out
@@ -406,8 +457,14 @@ def collect_event_ids(
         for g in entries:
             eid = str(getattr(g, "event_id", "") or "")
             date = (getattr(g, "date", "") or "")[:10]
-            if eid and (not date or date < slate_date):
+            if eid and (not date or date <= slate_date):
                 ids.add(eid)
+    # Always include completed games on today's slate so a same-day
+    # first FGM (e.g. LeBron vs MIL) is in the windows.
+    for g in games:
+        status = (getattr(g, "status", "") or "").lower()
+        if "final" in status or status in {"post", "completed", "status_final"}:
+            ids.add(str(g.event_id))
     return sorted(ids)
 
 
@@ -422,7 +479,7 @@ def load_or_fetch_events(
     missing: list[str] = []
     for eid in event_ids:
         cached = load_cached(folder, eid)
-        if cached and cached.get("first_scores") is not None:
+        if cached and cached.get("first_fgm"):
             records[eid] = cached
         else:
             missing.append(eid)
@@ -531,7 +588,15 @@ def build_first_score_rows(
     log_flags: dict[str, dict[str, int]] = {}
 
     for player in players:
-        played = _played(logs.get(player.id, []), before_date=slate_date)
+        raw_played = _played(logs.get(player.id, []), before_date="")
+        # Include games before the slate date, plus any completed game
+        # already in the PBP cache (today's finals).
+        played = []
+        for g in raw_played:
+            date = (g.date or "")[:10]
+            eid = str(g.event_id)
+            if (date and date < slate_date) or eid in records:
+                played.append(g)
         if len(played) < MIN_GAMES:
             continue
         seq: list[dict[str, Any]] = []
@@ -544,7 +609,7 @@ def build_first_score_rows(
             if not info:
                 continue
             tid = str(info.get("team_id") or player.team_id)
-            first = (rec.get("first_scores") or {}).get(tid) or {}
+            first = rec.get("first_fgm") or {}
             hit = str(first.get("player_id") or "") == str(player.id)
             flags[str(g.event_id)] = 1 if hit else 0
             seq.append(
@@ -556,6 +621,45 @@ def build_first_score_rows(
                     "tip_win": str(rec.get("tip_winner_team_id") or "") == tid,
                 }
             )
+        # Gamelogs can lag a same-day final. If the player is in tonight's
+        # PBP boxscore, fold that game into the windows.
+        seen = {str(s["log"].event_id) for s in seq}
+        for game in games:
+            rec = records.get(str(game.event_id))
+            if not rec or str(game.event_id) in seen:
+                continue
+            info = (rec.get("played") or {}).get(str(player.id))
+            if not info:
+                continue
+            tid = str(info.get("team_id") or player.team_id)
+            first = rec.get("first_fgm") or {}
+            hit = str(first.get("player_id") or "") == str(player.id)
+            flags[str(game.event_id)] = 1 if hit else 0
+            date = rec.get("date") or slate_date
+            is_home = tid == str(game.home_id)
+            opp = game.away_abbr if is_home else game.home_abbr
+            dummy = GameLog(
+                event_id=str(game.event_id),
+                date=date,
+                opponent_abbr=opp,
+                is_home=is_home,
+                minutes=float(info.get("minutes") or 1),
+                points=0,
+                rebounds=0,
+                assists=0,
+                threes=0,
+                pra=0,
+            )
+            seq.append(
+                {
+                    "log": dummy,
+                    "hit": hit,
+                    "started": bool(info.get("started")),
+                    "team_id": tid,
+                    "tip_win": str(rec.get("tip_winner_team_id") or "") == tid,
+                }
+            )
+        seq.sort(key=lambda s: (s["log"].date or "", s["log"].event_id), reverse=True)
         log_flags[player.id] = flags
         if len(seq) < MIN_GAMES:
             continue
@@ -575,8 +679,11 @@ def build_first_score_rows(
             h = sum(1 for s in items if s["hit"])
             return _rate(h, n), h, n
 
+        l4, l4_h, l4_n = wr(window(4))
         l5, l5_h, l5_n = wr(window(5))
+        l8, l8_h, l8_n = wr(window(8))
         l10, l10_h, l10_n = wr(window(10))
+        l15, l15_h, l15_n = wr(window(15))
         l20, l20_h, l20_n = wr(window(20))
         season, season_h, season_n = wr(seq)
         home_items = [s for s in seq if s["log"].is_home]
@@ -623,7 +730,26 @@ def build_first_score_rows(
         tip_w, tip_n = tip_rates.get(str(player.team_id), (0, 0))
         tip_win_rate = _rate(tip_w, tip_n)
         rest_days, is_b2b = _rest(played, slate_date)
-        score = trend_score(l5, l10, l20, season, venue_hit, min(streak, STREAK_CAP))
+        venue_streak = home_streak if venue == "H" else away_streak
+        score = trend_score(l4, l5, l8, l10, l15, l20, streak, venue_streak)
+        offer = None
+        offers = get_offers(
+            {"name": player.name, "event_id": game.event_id, "team_abbr": player.team_abbr},
+            meta_s["prop"],
+            sport=sport,
+        )
+        for cand in offers:
+            if cand.source == "live":
+                offer = cand
+                break
+        price = offer.price_for("over") if offer else None
+        shown_label = line_label(
+            meta_s["prop"],
+            0.5,
+            side="over",
+            price=price,
+            source=(offer.source if offer else "research"),
+        )
 
         rows.append(
             {
@@ -634,22 +760,31 @@ def build_first_score_rows(
                 "opponent": opp,
                 "venue": venue,
                 "event_id": game.event_id,
-                "game": game.label(),
+                "game": game.vs_label(),
                 "game_time_et": game.start_et,
                 "prop": meta_s["prop"],
                 "prop_label": meta_s["prop_label"],
                 "prop_full": meta_s["prop_full"],
                 "line": 0.5,
                 "display_line": 0.5,
-                "line_label": meta_s["line_label"],
+                "line_label": shown_label,
                 "side": "over",
-                "line_source": "research",
-                "american_odds": None,
-                "book": "",
-                "book_title": "",
+                "line_source": (offer.source if offer else "research"),
+                "american_odds": price,
+                "book": (offer.book if offer else ""),
+                "book_title": (offer.book_title if offer else ""),
+                "l4": l4,
                 "l5": l5,
+                "l8": l8,
                 "l10": l10,
+                "l15": l15,
                 "l20": l20,
+                "l4_hits": l4_h,
+                "l4_games": l4_n,
+                "l8_hits": l8_h,
+                "l8_games": l8_n,
+                "l15_hits": l15_h,
+                "l15_games": l15_n,
                 "season": season,
                 "venue_hit": venue_hit,
                 "home_hit": home_hit,

@@ -43,7 +43,7 @@ log = logging.getLogger("propscore")
 _refresh_lock = threading.Lock()
 _refresh_state: dict = {"running": False, "last": None, "error": None}
 
-app = FastAPI(title="Da Real Big Homie Props", version="1.4.0", docs_url="/api/docs", redoc_url=None)
+app = FastAPI(title="Da Real Big Homie Props", version="1.5.0", docs_url="/api/docs", redoc_url=None)
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
 
@@ -80,7 +80,7 @@ def health():
         "nba_dates": available_dates("nba"),
         "nhl_dates": available_dates("nhl"),
         "refresh": _refresh_state,
-        "features": "top10-v1",
+        "features": "fgm-v1",
         "app": "Da Real Big Homie Props",
         "odds": odds_status(),
     }
@@ -104,7 +104,7 @@ def board(
     date: Optional[str] = None,
     stat: str = "",
     game: str = "",
-    min_l10: float = Query(0.7, ge=0, le=1),
+    min_l10: float = Query(0.0, ge=0, le=1),
     hide_out: bool = True,
     hide_gimme: bool = False,
     view: str = Query("value", pattern="^(value|all)$"),
@@ -172,7 +172,11 @@ def refresh(
         raise HTTPException(401, "Invalid or missing X-Refresh-Token")
     sports = _sports_to_refresh(sport)
     if _refresh_state["running"]:
-        return JSONResponse({"ok": False, "status": "already_running"}, status_code=409)
+        _refresh_state["pending"] = {"sports": sports, "date": date}
+        return JSONResponse(
+            {"ok": True, "status": "queued", "sports": sports, "date": date or today_et()},
+            status_code=202,
+        )
     thread = threading.Thread(target=_run_refresh_sports, args=(sports, date), daemon=True)
     thread.start()
     return {"ok": True, "status": "started", "sports": sports, "date": date or today_et()}
@@ -226,6 +230,13 @@ def _run_refresh_sports(
     finally:
         _refresh_state["running"] = False
         _refresh_lock.release()
+        pending = _refresh_state.pop("pending", None)
+        if pending:
+            threading.Thread(
+                target=_run_refresh_sports,
+                args=(pending["sports"], pending.get("date"), False, False),
+                daemon=True,
+            ).start()
 
 
 def _scheduler_loop() -> None:
@@ -259,13 +270,11 @@ def on_startup() -> None:
         on_render = bool(os.environ.get("RENDER"))
         fetch_on_boot = os.environ.get("ODDS_FETCH_ON_BOOT", "").strip().lower() in {"1", "true", "yes"}
         skip_odds = on_render and not fetch_on_boot
-        # Play-by-play summaries are large; skip them on Render boot so the
-        # free-tier cold start stays short. POST /api/refresh and the 10 AM
-        # ET job still fetch new games incrementally.
-        skip_pbp = on_render
+        # Never skip play-by-play: an empty 1FG list is worse than a
+        # slightly longer first boot, and compact PBP extracts are fast.
         threading.Thread(
             target=_run_refresh_sports,
-            args=(missing, None, skip_odds, skip_pbp),
+            args=(missing, None, skip_odds, False),
             daemon=True,
         ).start()
 

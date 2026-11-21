@@ -72,6 +72,7 @@ button, input { font: inherit; color: inherit; }
   -webkit-overflow-scrolling: touch;
 }
 .game-chip { flex: none; font-size: 12px; white-space: nowrap; }
+.games .smart-label { flex: none; padding-top: 8px; }
 
 .toolbar { padding: 8px 14px 0; }
 .smart-filters, .filter-bar {
@@ -134,9 +135,10 @@ button, input { font: inherit; color: inherit; }
   display: inline-block;
 }
 .rates-grid {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 6px 18px;
   padding: 0 12px 8px;
 }
+.rates-col { display: flex; flex-direction: column; gap: 4px; }
 .rate { font-size: 13px; }
 .rate b { color: var(--accent); }
 .rate.muted b { color: var(--muted); }
@@ -351,3 +353,15 @@ table.box tr.miss td:first-child { color: var(--miss); }
   margin-top: 6px;
 }
 .more-lines { margin-top: 6px; }
+
+.card-foot {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 8px; padding: 0 12px 12px;
+}
+.full-hist {
+  background: none; border: 0; color: var(--muted);
+  font-size: 12px; font-weight: 700; cursor: pointer;
+}
+.view-log { color: var(--accent); }
+#board-view.first-mode .filter-bar label.toggle:has(#view-value),
+#board-view.first-mode #gimme-wrap { display: none !important; }
