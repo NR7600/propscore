@@ -1,0 +1,18 @@
+# Blueprint for Render (https://render.com).
+# From the Render dashboard: New → Blueprint, then point at this repo.
+services:
+  - type: web
+    name: propscore
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: PROPSCORE_REFRESH_HOUR
+        value: "10"
+      # Optional: set a token, then call POST /api/refresh with header X-Refresh-Token.
+      - key: REFRESH_TOKEN
+        sync: false

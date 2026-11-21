@@ -1,0 +1,108 @@
+"""Shared dataclasses and the adapter interface every sport implements."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field, asdict
+from typing import Protocol
+
+
+@dataclass
+class Game:
+    event_id: str
+    start_utc: str
+    start_et: str
+    home_id: str
+    home_abbr: str
+    home_name: str
+    away_id: str
+    away_abbr: str
+    away_name: str
+    status: str
+
+    def label(self) -> str:
+        return f"{self.away_abbr} @ {self.home_abbr}"
+
+    def to_dict(self) -> dict:
+        d = asdict(self)
+        d["label"] = self.label()
+        return d
+
+
+@dataclass
+class Injury:
+    player_id: str | None
+    player_name: str
+    status: str
+    detail: str | None = None
+    comment: str | None = None
+    return_date: str | None = None
+
+
+@dataclass
+class Player:
+    id: str
+    name: str
+    short_name: str
+    team_id: str
+    team_abbr: str
+    team_name: str
+    position: str
+    jersey: str
+    headshot: str
+    injury_status: str | None = None
+    injury_detail: str | None = None
+    injury_comment: str | None = None
+    injury_return: str | None = None
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass
+class GameLog:
+    event_id: str
+    date: str
+    opponent_abbr: str
+    is_home: bool
+    minutes: float
+    points: int
+    rebounds: int
+    assists: int
+    threes: int
+    pra: int
+    result: str | None = None
+
+    def value(self, stat: str) -> int:
+        return int(getattr(self, stat))
+
+    def to_dict(self) -> dict:
+        d = asdict(self)
+        d["venue"] = "H" if self.is_home else "A"
+        return d
+
+
+@dataclass
+class Slate:
+    date: str  # YYYY-MM-DD in America/New_York
+    games: list[Game] = field(default_factory=list)
+    players: list[Player] = field(default_factory=list)
+    logs: dict[str, list[GameLog]] = field(default_factory=dict)
+
+
+class Sport(Protocol):
+    key: str
+    display_name: str
+    # stat key -> (short label, output field name on GameLog)
+    props: dict[str, str]
+
+    def fetch_slate(self, date: str) -> list[Game]:
+        ...
+
+    def fetch_injuries(self) -> list[Injury]:
+        ...
+
+    def fetch_roster(self, team_id: str, team_abbr: str, team_name: str) -> list[Player]:
+        ...
+
+    def fetch_game_logs(self, player_id: str) -> list[GameLog]:
+        ...

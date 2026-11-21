@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PropScore — NBA player prop trends</title>
+  <style>
+    :root {
+      --bg: #0c0f14;
+      --bg-2: #12171f;
+      --card: #171d27;
+      --line: #2a3342;
+      --text: #e8edf5;
+      --muted: #8b95a7;
+      --accent: #3ee08f;
+      --accent-dim: rgba(62, 224, 143, 0.14);
+      --warn: #f5b942;
+      --bad: #ff6b6b;
+      --chip: #222b38;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); }
+    body {
+      font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+      line-height: 1.45;
+      min-height: 100vh;
+    }
+    header {
+      position: sticky; top: 0; z-index: 20;
+      background: rgba(12, 15, 20, 0.92);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--line);
+      padding: 14px 16px 12px;
+    }
+    .wrap { max-width: 1180px; margin: 0 auto; }
+    .brand { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+    .brand h1 { font-size: 1.25rem; margin: 0; letter-spacing: -0.03em; }
+    .brand h1 span { color: var(--accent); }
+    .meta { color: var(--muted); font-size: 0.85rem; }
+    .filters {
+      display: flex; flex-wrap: wrap; gap: 10px;
+      padding: 14px 16px 0;
+      align-items: end;
+    }
+    label { display: flex; flex-direction: column; gap: 4px; font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+    select, input[type="range"], input[type="search"] {
+      background: var(--card); color: var(--text);
+      border: 1px solid var(--line); border-radius: 8px;
+      padding: 8px 10px; font: inherit;
+    }
+    input[type="search"] { min-width: 160px; }
+    .filter-row { display: flex; align-items: center; gap: 8px; }
+    .check { flex-direction: row; align-items: center; text-transform: none; letter-spacing: 0; font-size: 0.85rem; color: var(--text); gap: 6px; padding-bottom: 8px; }
+    .rate-val { color: var(--accent); font-variant-numeric: tabular-nums; min-width: 3.2em; }
+    main { padding: 12px 16px 48px; }
+    .count { color: var(--muted); font-size: 0.85rem; margin: 0 0 10px; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+    th { text-align: left; font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; padding: 8px 8px; border-bottom: 1px solid var(--line); position: sticky; top: 72px; background: var(--bg); cursor: pointer; white-space: nowrap; }
+    td { padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; font-variant-numeric: tabular-nums; }
+    tr.row { cursor: pointer; }
+    tr.row:hover { background: var(--bg-2); }
+    tr.row.active { background: var(--accent-dim); }
+    .player { display: flex; align-items: center; gap: 8px; min-width: 160px; }
+    .player img { width: 32px; height: 32px; border-radius: 50%; background: var(--chip); object-fit: cover; }
+    .player .name { font-weight: 600; }
+    .player .sub { display: block; color: var(--muted); font-size: 0.75rem; font-weight: 400; }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; background: var(--chip); font-weight: 600; font-size: 0.8rem; }
+    .score { font-weight: 700; color: var(--accent); }
+    .badge { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 4px; font-size: 0.68rem; font-weight: 700; text-transform: uppercase; }
+    .badge.out, .badge.ofs { background: rgba(255,107,107,0.18); color: var(--bad); }
+    .badge.dtd, .badge.day-to-day, .badge.questionable { background: rgba(245,185,66,0.18); color: var(--warn); }
+    .badge.probable { background: var(--accent-dim); color: var(--accent); }
+    .hit { color: var(--accent); }
+    .miss { color: var(--muted); }
+    .detail {
+      display: none;
+      background: var(--card);
+      border-bottom: 1px solid var(--line);
+    }
+    .detail.open { display: table-row; }
+    .detail-inner { padding: 14px 12px 18px; }
+    .detail h3 { margin: 0 0 4px; font-size: 1rem; }
+    .detail p { margin: 0 0 12px; color: var(--muted); font-size: 0.85rem; }
+    .chart { display: flex; align-items: flex-end; gap: 6px; height: 140px; padding: 8px 0 28px; overflow-x: auto; }
+    .bar-wrap { flex: 0 0 28px; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; position: relative; }
+    .bar { width: 18px; border-radius: 4px 4px 0 0; min-height: 2px; }
+    .bar.over { background: var(--accent); }
+    .bar.under { background: #3a4456; }
+    .bar-label { position: absolute; bottom: -22px; font-size: 0.62rem; color: var(--muted); white-space: nowrap; }
+    .bar-val { font-size: 0.62rem; color: var(--text); margin-bottom: 3px; }
+    .line-note { font-size: 0.8rem; color: var(--muted); margin-top: 8px; }
+    footer { padding: 8px 16px 32px; color: var(--muted); font-size: 0.78rem; max-width: 1180px; margin: 0 auto; }
+    .empty { padding: 32px 8px; color: var(--muted); text-align: center; }
+    @media (max-width: 800px) {
+      .hide-sm { display: none; }
+      th { top: 118px; }
+      .player { min-width: 120px; }
+    }
+  </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600;700&display=swap">
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <div class="brand">
+        <h1>Prop<span>Score</span></h1>
+        <div class="meta" id="meta"></div>
+      </div>
+      <div class="filters wrap" style="padding-left:0;padding-right:0">
+        <label>Stat
+          <select id="f-stat">
+            <option value="">All props</option>
+            <option value="points">Points</option>
+            <option value="rebounds">Rebounds</option>
+            <option value="assists">Assists</option>
+            <option value="threes">Threes</option>
+            <option value="pra">PRA</option>
+          </select>
+        </label>
+        <label>Game
+          <select id="f-game"><option value="">All games</option></select>
+        </label>
+        <label>Min L10 hit rate
+          <div class="filter-row">
+            <input id="f-l10" type="range" min="0" max="100" step="5" value="70">
+            <span class="rate-val" id="f-l10-val">70%</span>
+          </div>
+        </label>
+        <label>Search
+          <input id="f-q" type="search" placeholder="Player or team">
+        </label>
+        <label class="check"><input type="checkbox" id="f-hide-out" checked> Hide Out / OFS</label>
+        <label class="check"><input type="checkbox" id="f-hide-gimme"> Hide 100% L10 lines</label>
+      </div>
+    </div>
+  </header>
+  <main class="wrap">
+    <p class="count" id="count"></p>
+    <div style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th data-sort="rank">#</th>
+            <th data-sort="player">Player</th>
+            <th data-sort="line_label">Prop</th>
+            <th data-sort="l5">L5</th>
+            <th data-sort="l10">L10</th>
+            <th data-sort="l20" class="hide-sm">L20</th>
+            <th data-sort="season" class="hide-sm">Season</th>
+            <th data-sort="venue_hit" class="hide-sm">Venue</th>
+            <th data-sort="streak">Streak</th>
+            <th data-sort="score">Score</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="empty" hidden>No rows match these filters.</div>
+  </main>
+  <footer>
+    Research tool only — not a sportsbook, not betting advice. 21+.
+    Trend score blends L5 (30%), L10 (25%), L20 (15%), season (10%),
+    same-venue hit rate (10%), and current hit streak (10%).
+    Lines are standard thresholds unless a live odds feed is configured.
+    <span id="notes"></span>
+  </footer>
+  <script id="board-data" type="application/json">/*__BOARD_DATA__*/</script>
+  <script>
+    const DATA = JSON.parse(document.getElementById("board-data").textContent);
+    const tbody = document.getElementById("tbody");
+    const empty = document.getElementById("empty");
+    const gameSel = document.getElementById("f-game");
+    let sortKey = "score";
+    let sortDir = "desc";
+    let openId = null;
+
+    document.getElementById("meta").textContent =
+      `${DATA.sport} · ${DATA.date} · ${DATA.games.length} games · ${DATA.rows.length} ranked props · America/New_York`;
+    if (DATA.notes && DATA.notes.length) {
+      document.getElementById("notes").textContent = " " + DATA.notes.join(" ");
+    }
+    DATA.games.forEach(g => {
+      const opt = document.createElement("option");
+      opt.value = g.event_id;
+      opt.textContent = `${g.away_abbr} @ ${g.home_abbr} · ${g.start_et}`;
+      gameSel.appendChild(opt);
+    });
+
+    const pct = (v) => `${Math.round((v || 0) * 100)}%`;
+    const badge = (status) => {
+      if (!status) return "";
+      const cls = status.toLowerCase().replace(/\s+/g, "-");
+      return `<span class="badge ${cls}">${status}</span>`;
+    };
+
+    function filtered() {
+      const stat = document.getElementById("f-stat").value;
+      const game = gameSel.value;
+      const minL10 = Number(document.getElementById("f-l10").value) / 100;
+      const q = document.getElementById("f-q").value.trim().toLowerCase();
+      const hideOut = document.getElementById("f-hide-out").checked;
+      const hideGimme = document.getElementById("f-hide-gimme").checked;
+      return DATA.rows.filter(r => {
+        if (stat && r.prop !== stat) return false;
+        if (game && r.event_id !== game) return false;
+        if ((r.l10 || 0) < minL10) return false;
+        if (hideOut && r.injury_status && /^(out|ofs)$/i.test(r.injury_status)) return false;
+        if (hideGimme && r.l10 >= 0.999) return false;
+        if (q && !(`${r.player} ${r.team} ${r.opponent} ${r.line_label}`.toLowerCase().includes(q))) return false;
+        return true;
+      }).sort((a, b) => {
+        const av = a[sortKey], bv = b[sortKey];
+        if (av === bv) return b.score - a.score;
+        if (typeof av === "string") return sortDir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
+        return sortDir === "asc" ? av - bv : bv - av;
+      });
+    }
+
+    function chartHtml(playerId, prop, line, label) {
+      const p = DATA.players[playerId];
+      if (!p) return "";
+      const logs = (p.logs || []).slice(0, 15).reverse();
+      if (!logs.length) return "<p>No recent game logs.</p>";
+      const maxVal = Math.max(line, ...logs.map(g => g[prop] || 0), 1);
+      const bars = logs.map(g => {
+        const val = g[prop] || 0;
+        const over = val >= line;
+        const h = Math.max(4, Math.round((val / maxVal) * 100));
+        const opp = (g.venue || (g.is_home ? "H" : "A")) + " " + (g.opponent_abbr || "");
+        return `<div class="bar-wrap" title="${g.date} ${opp}: ${val}">
+          <div class="bar-val">${val}</div>
+          <div class="bar ${over ? "over" : "under"}" style="height:${h}%"></div>
+          <div class="bar-label">${(g.date || "").slice(5)}</div>
+        </div>`;
+      }).join("");
+      const inj = [p.injury_status, p.injury_detail, p.injury_comment].filter(Boolean).join(" — ");
+      return `<div class="detail-inner">
+        <h3>${p.name} · ${label}</h3>
+        <p>${p.team_name} · ${p.position || ""} ${inj ? " · " + inj : ""}<br>Last ${logs.length} games vs the ${label} line. Green bars cleared it.</p>
+        <div class="chart">${bars}</div>
+        <div class="line-note">Line: ${label}. Click the row again to close.</div>
+      </div>`;
+    }
+
+    function render() {
+      const rows = filtered();
+      document.getElementById("count").textContent =
+        `Showing ${rows.length} of ${DATA.rows.length} props. Click a row for the game-log chart.`;
+      tbody.innerHTML = "";
+      empty.hidden = rows.length > 0;
+      rows.forEach((r, i) => {
+        const tr = document.createElement("tr");
+        tr.className = "row" + (openId === r.player_id + r.line_label ? " active" : "");
+        tr.dataset.key = r.player_id + r.line_label;
+        const img = r.headshot ? `<img src="${r.headshot}" alt="" width="32" height="32">` : "";
+        tr.innerHTML = `
+          <td>${i + 1}</td>
+          <td><div class="player">${img}<div><span class="name">${r.player}${badge(r.injury_status)}</span>
+            <span class="sub">${r.team} ${r.venue === "H" ? "vs" : "@"} ${r.opponent} · ${r.game_time_et}</span></div></div></td>
+          <td><span class="pill">${r.line_label}</span></td>
+          <td class="${r.l5 >= 0.7 ? "hit" : ""}">${pct(r.l5)}</td>
+          <td class="${r.l10 >= 0.7 ? "hit" : ""}">${pct(r.l10)}</td>
+          <td class="hide-sm">${pct(r.l20)}</td>
+          <td class="hide-sm">${pct(r.season)}</td>
+          <td class="hide-sm">${pct(r.venue_hit)} ${r.venue}</td>
+          <td>${r.streak || "—"}</td>
+          <td class="score">${r.score.toFixed(1)}</td>`;
+        tbody.appendChild(tr);
+        const detail = document.createElement("tr");
+        detail.className = "detail" + (openId === tr.dataset.key ? " open" : "");
+        detail.innerHTML = `<td colspan="10">${openId === tr.dataset.key ? chartHtml(r.player_id, r.prop, r.line, r.line_label) : ""}</td>`;
+        tbody.appendChild(detail);
+        tr.addEventListener("click", () => {
+          openId = openId === tr.dataset.key ? null : tr.dataset.key;
+          render();
+          if (openId) tr.scrollIntoView({ block: "nearest" });
+        });
+      });
+    }
+
+    document.querySelectorAll(".filters input, .filters select").forEach(el => {
+      el.addEventListener("input", render);
+      el.addEventListener("change", render);
+    });
+    document.getElementById("f-l10").addEventListener("input", e => {
+      document.getElementById("f-l10-val").textContent = e.target.value + "%";
+    });
+    document.querySelectorAll("th[data-sort]").forEach(th => {
+      th.addEventListener("click", () => {
+        const key = th.dataset.sort;
+        if (sortKey === key) sortDir = sortDir === "desc" ? "asc" : "desc";
+        else { sortKey = key; sortDir = key === "player" || key === "line_label" ? "asc" : "desc"; }
+        render();
+      });
+    });
+    render();
+  </script>
+</body>
+</html>

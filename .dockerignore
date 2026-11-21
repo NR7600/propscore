@@ -1,0 +1,10 @@
+.venv
+__pycache__
+**/__pycache__
+cache
+screens
+.git
+.gitignore
+*.pyc
+output/*.html
+output/*.csv
