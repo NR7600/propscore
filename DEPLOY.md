@@ -1,4 +1,4 @@
-# Deploying PropScore
+# Deploying Da Real Big Homie Props
 
 The cheapest easy path is a **free Render web service**. It gives you an
 `https://….onrender.com` URL with TLS, which a phone needs before
@@ -46,8 +46,7 @@ curl -X POST https://YOUR-APP.onrender.com/api/refresh \
 - **Railway**: also easy (New Project → Deploy from GitHub). Their
   free trial / hobby credits change over time and often ask for a
   card; Render’s free web service is the more predictable $0 start.
-- **Fly.io**: `fly launch` with the included `Dockerfile` if you
-  already have a Fly account. Not the cheapest first step.
+- **Fly.io**: `fly launch` with the included `Dockerfile` if you already have a Fly account. Not the cheapest first step.
 - **Docker** anywhere:
 
   ```bash

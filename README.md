@@ -1,6 +1,6 @@
-# PropScore
+# Da Real Big Homie Props
 
-A Slipscore-style player prop research app. It pulls tonight’s NBA slate,
+A Slipscore-style player prop research app (the code and repo are still named `propscore`). It pulls tonight’s NBA or NHL slate,
 recent game logs, and injury tags, then ranks standard over-lines by trend
 strength. Use it in the browser or install it to a phone’s Home Screen.
 
@@ -11,7 +11,8 @@ strength. Use it in the browser or install it to a phone’s Home Screen.
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-.venv/bin/python run.py nba          # (re)build tonight’s board
+.venv/bin/python run.py nba          # (re)build tonight’s NBA board
+.venv/bin/python run.py nhl          # (re)build tonight’s NHL board
 .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
@@ -55,9 +56,9 @@ hiding 100% hits on the lowest threshold.
 | `GET /api/nba/board` | Paginated ranked props. Query: `date`, `stat`, `game`, `min_l10`, `hide_out`, `hide_gimme`, `view=value\|all`, `q`, `page`, `page_size` |
 | `GET /api/nba/player/{id}` | Player bio, injury, last-20 logs, and all of their lines |
 | `GET /api/nba/meta` | Games, date, generated-at |
-| `GET /api/sports` | NBA live; NHL and NFL marked coming soon |
+| `GET /api/sports` | NBA and NHL live; NFL marked coming soon |
 | `POST /api/refresh` | Rebuild the board (`X-Refresh-Token` if `REFRESH_TOKEN` is set) |
-| `GET /health` | Liveness |
+| `GET /health` | Liveness, plus `nba_dates` and `nhl_dates` |
 
 ## Data sources
 
@@ -71,8 +72,21 @@ Free public ESPN JSON only. No paid keys are required.
 | Game logs | `site.web.api.espn.com/.../athletes/{id}/gamelog?season=2027` | Works |
 | `cdn.nba.com` live scoreboard | — | 403 from this environment |
 | `stats.nba.com` playergamelogs | — | Timed out from this environment |
+| NHL slate / rosters / injuries | `site.api.espn.com/.../hockey/nhl/...` | Works |
+| NHL game logs | `site.web.api.espn.com/.../hockey/nhl/athletes/{id}/gamelog?season=2027` | Works |
 
-The 2026-27 NBA season is ESPN season year `2027`.
+The 2026-27 NBA and NHL seasons are ESPN season year `2027`.
+
+NHL standard over-thresholds:
+
+- Goals: 0.5 / 1.5
+- Assists: 0.5 / 1.5
+- Points: 0.5 / 1.5 / 2.5
+- Shots on goal: 1.5 / 2.5 / 3.5 / 4.5
+- Goalie saves: 20.5 / 25.5 / 30.5
+
+Skaters need 5 games and about 10 minutes average TOI; goalies need 5 starts.
+ESPN skater game logs do not include hits or blocked shots, so those props are omitted.
 
 Lines are **standard over-thresholds**, not sportsbook numbers:
 
@@ -111,11 +125,12 @@ app/static/             # mobile SPA, manifest, service worker
 propscore/ranking.py    # shared scoring
 propscore/odds.py       # standard lines + ODDS_API_KEY stub
 propscore/sports/nba.py # NBA slate, rosters, logs, injuries
+propscore/sports/nhl.py # NHL slate, rosters, logs, injuries
 output/                 # generated boards
 DEPLOY.md               # Render free-tier steps
 ```
 
-## Adding a sport (NHL, then NFL)
+## Adding a sport (NFL next)
 
 1. Add `propscore/sports/<sport>.py` with the same surface as `NBA`.
 2. Register it in `propscore/sports/__init__.py`.

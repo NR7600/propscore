@@ -54,8 +54,8 @@ def main() -> int:
     if not use_cache:
         client = HttpClient(CACHE_DIR / args.sport.lower() / f"{date}_fresh")
 
-    if args.sport.lower() not in {"nba"}:
-        raise SystemExit(f"{args.sport} is not implemented yet. Start with: python run.py nba")
+    if args.sport.lower() not in {"nba", "nhl"}:
+        raise SystemExit(f"{args.sport} is not implemented yet. Available: nba, nhl")
     sport = get_sport(args.sport, client)
 
     print(f"Fetching {sport.display_name} slate for {date} (America/New_York)...")
@@ -95,20 +95,48 @@ def main() -> int:
             if done % 20 == 0 or done == len(players):
                 print(f"  {done}/{len(players)} logs")
 
-    rows = rank_slate(players, logs, games, list(sport.props.keys()), sport=sport.key)
+    qual = getattr(sport, "qualification", None)
+    rows = rank_slate(
+        players, logs, games, list(sport.props.keys()), sport=sport.key, qualification=qual
+    )
     qualified = {r.player_id for r in rows}
     print(f"Ranked {len(rows)} prop lines across {len(qualified)} players.")
 
     notes = []
-    notes.append(
-        "Data from ESPN public JSON (scoreboard, rosters, injuries, player gamelogs). "
-        "cdn.nba.com returned 403 and stats.nba.com timed out from this environment."
-    )
-    notes.append(
-        "No free odds feed is wired in; lines are standard over-thresholds "
-        "(PTS 10/15/20/25, REB 4/6/8/10, AST 2/4/6/8, 3PM 1/2/3/4, PRA 15/20/25/30). "
-        "Set ODDS_API_KEY later to swap in sportsbook lines."
-    )
+    if sport.key == "nhl":
+        notes.append(
+            "Data from ESPN public JSON (NHL scoreboard, rosters, injuries, player gamelogs). "
+            "Season year 2027 = 2026-27. Skater logs include goals, assists, points, shots, "
+            "and TOI; they do not include hits or blocked shots, so those props are omitted. "
+            "Goalie logs include starts and saves."
+        )
+        notes.append(
+            "Lines are standard over-thresholds (G 0.5/1.5, A 0.5/1.5, PTS 0.5/1.5/2.5, "
+            "SOG 1.5/2.5/3.5/4.5, SV 20.5/25.5/30.5). Skaters need 5 games and ~10 minutes "
+            "TOI; goalies need 5 starts. Set ODDS_API_KEY later to swap in sportsbook lines."
+        )
+        sources = [
+            "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard",
+            "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/teams/{id}/roster",
+            "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/injuries",
+            "https://site.web.api.espn.com/apis/common/v3/sports/hockey/nhl/athletes/{id}/gamelog",
+        ]
+    else:
+        notes.append(
+            "Data from ESPN public JSON (scoreboard, rosters, injuries, player gamelogs). "
+            "cdn.nba.com returned 403 and stats.nba.com timed out from this environment."
+        )
+        notes.append(
+            "No free odds feed is wired in; lines are standard over-thresholds "
+            "(PTS 10/15/20/25, REB 4/6/8/10, AST 2/4/6/8, 3PM 1/2/3/4, PRA 15/20/25/30). "
+            "Set ODDS_API_KEY later to swap in sportsbook lines."
+        )
+        sources = [
+            "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard",
+            "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/{id}/roster",
+            "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries",
+            "https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/athletes/{id}/gamelog",
+        ]
     if failed:
         notes.append(f"Game logs failed for {len(failed)} player(s).")
         print("Failed logs:")
@@ -116,12 +144,6 @@ def main() -> int:
             print("  ", line)
 
     stem = OUTPUT_DIR / f"{sport.key}_{date}"
-    sources = [
-        "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard",
-        "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/{id}/roster",
-        "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries",
-        "https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/athletes/{id}/gamelog",
-    ]
     write_json(
         stem.with_suffix(".json"),
         sport=sport.key,

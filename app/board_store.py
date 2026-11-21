@@ -8,13 +8,11 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from propscore.odds import STANDARD_LINES
+from propscore.odds import lowest_line, props_for_sport
 
 ET = ZoneInfo("America/New_York")
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = ROOT / "output"
-
-LOWEST_LINE = {prop: min(lines) for prop, lines in STANDARD_LINES.items()}
 
 # Compact fields sent in list responses so phones never download logs.
 ROW_FIELDS = (
@@ -111,6 +109,7 @@ class BoardStore:
             "row_count": len(data.get("rows") or []),
             "player_count": len(data.get("players") or {}),
             "formula": (data.get("formula") or {}).get("description"),
+            "props": props_for_sport(sport),
         }
 
     def query_board(
@@ -131,6 +130,7 @@ class BoardStore:
         data = self.get(sport, date)
         rows = _filter_rows(
             data.get("rows") or [],
+            sport=sport,
             stat=stat,
             game=game,
             min_l10=min_l10,
@@ -169,6 +169,7 @@ class BoardStore:
             "total": total,
             "total_pages": total_pages,
             "has_more": page < total_pages,
+            "props": props_for_sport(sport),
             "rows": slice_,
         }
 
@@ -213,12 +214,16 @@ def _view_label(view: str, min_l10: float) -> str:
 def _is_out(status: str | None) -> bool:
     if not status:
         return False
-    return status.strip().lower() in {"out", "ofs"}
+    text = status.strip().lower()
+    if text in {"out", "ofs", "ir", "ir-lt", "ltir", "injured reserve"}:
+        return True
+    return "injured reserve" in text
 
 
 def _filter_rows(
     rows: list[dict[str, Any]],
     *,
+    sport: str = "nba",
     stat: str,
     game: str,
     min_l10: float,
@@ -240,7 +245,7 @@ def _filter_rows(
             continue
         if hide_out and _is_out(r.get("injury_status")):
             continue
-        if hide_gimme and _is_gimme(r):
+        if hide_gimme and _is_gimme(r, sport):
             continue
         if needle:
             hay = " ".join(
@@ -258,13 +263,13 @@ def _filter_rows(
     return out
 
 
-def _is_gimme(row: dict[str, Any]) -> bool:
+def _is_gimme(row: dict[str, Any], sport: str = "nba") -> bool:
     """True when L10 is a perfect 100% on the easiest (lowest) threshold."""
     prop = row.get("prop")
     line = row.get("line")
     if (row.get("l10") or 0) < 0.999:
         return False
-    lowest = LOWEST_LINE.get(prop)
+    lowest = lowest_line(str(prop or ""), sport)
     if lowest is None:
         return False
     return float(line) <= float(lowest) + 1e-9

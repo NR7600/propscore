@@ -96,6 +96,7 @@
       state.generatedAt = data.generated_at;
       state.stale = data.stale;
       state.rows = append ? state.rows.concat(data.rows || []) : (data.rows || []);
+      if (!append) renderStatPills(data.props || []);
       renderMeta();
       renderGames();
       renderList();
@@ -111,7 +112,7 @@
   function renderMeta() {
     const date = state.date || "";
     const stale = state.stale ? " · showing latest saved slate" : "";
-    $("date-line").textContent = `${date} · ${state.games.length} games · updated ${state.generatedAt || "—"}${stale}`;
+    $("date-line").textContent = `${(state.sport || "nba").toUpperCase()} · ${date} · ${state.games.length} games · updated ${state.generatedAt || "—"}${stale}`;
     $("view-note").textContent = state.viewLabel || "";
     $("gimme-wrap").hidden = state.filters.view === "value";
   }
@@ -233,7 +234,7 @@
     $("player-lines").onclick = (ev) => {
       const btn = ev.target.closest("[data-prop]");
       if (!btn) return;
-      const next = `#/player/${p.id}?prop=${encodeURIComponent(btn.dataset.prop)}&line=${encodeURIComponent(btn.dataset.line)}`;
+      const next = `#/${state.sport}/player/${p.id}?prop=${encodeURIComponent(btn.dataset.prop)}&line=${encodeURIComponent(btn.dataset.line)}`;
       if (location.hash !== next) location.hash = next;
       else renderPlayer(data, btn.dataset.prop, btn.dataset.line);
     };
@@ -266,6 +267,41 @@
     </div>`;
   }
 
+  function renderStatPills(props) {
+    const current = state.filters.stat;
+    const buttons = ['<button class="pill' + (current ? "" : " on") + '" data-stat="">All</button>'];
+    (props || []).forEach((prop) => {
+      const key = prop.key || prop;
+      const label = prop.label || key;
+      const on = current === key ? " on" : "";
+      buttons.push(`<button class="pill${on}" data-stat="${escapeHtml(key)}">${escapeHtml(label)}</button>`);
+    });
+    $("stats").innerHTML = buttons.join("");
+  }
+
+  function setSportTab() {
+    document.querySelectorAll(".sport[data-sport]").forEach((btn) => {
+      const on = btn.dataset.sport === state.sport && !btn.classList.contains("soon");
+      btn.classList.toggle("on", on);
+    });
+  }
+
+  function switchSport(sport) {
+    if (sport === state.sport && (location.hash === "" || location.hash === "#/" || location.hash === `#/${sport}`)) {
+      return;
+    }
+    state.sport = sport;
+    state.date = null;
+    state.filters.stat = "";
+    state.filters.game = "";
+    state.filters.q = "";
+    state.rows = [];
+    $("q").value = "";
+    setSportTab();
+    if (location.hash !== `#/${sport}`) location.hash = `#/${sport}`;
+    else fetchBoard({ append: false });
+  }
+
   function showBoard() {
     $("player-view").hidden = true;
     $("board-view").hidden = false;
@@ -273,18 +309,40 @@
 
   function parseRoute() {
     const hash = location.hash || "#/";
-    const m = hash.match(/^#\/player\/([^?]+)(?:\?(.*))?$/);
-    if (m) {
-      const params = new URLSearchParams(m[2] || "");
-      return { name: "player", id: decodeURIComponent(m[1]), prop: params.get("prop") || "", line: params.get("line") || "" };
+    const player = hash.match(/^#\/(?:(nba|nhl)\/)?player\/([^?]+)(?:\?(.*))?$/);
+    if (player) {
+      const params = new URLSearchParams(player[3] || "");
+      return {
+        name: "player",
+        sport: player[1] || state.sport || "nba",
+        id: decodeURIComponent(player[2]),
+        prop: params.get("prop") || "",
+        line: params.get("line") || "",
+      };
     }
-    return { name: "board" };
+    const board = hash.match(/^#\/(nba|nhl)\/?$/);
+    if (board) return { name: "board", sport: board[1] };
+    return { name: "board", sport: "nba" };
   }
 
   function applyRoute() {
+    const prevSport = state.sport;
     state.route = parseRoute();
+    if (state.route.sport && state.route.sport !== state.sport) {
+      state.sport = state.route.sport;
+      state.date = null;
+      state.filters.stat = "";
+      state.filters.game = "";
+      state.rows = [];
+      setSportTab();
+      if (state.route.name === "board") fetchBoard({ append: false });
+    }
     if (state.route.name === "player") openPlayer(state.route.id, state.route.prop, state.route.line);
     else showBoard();
+    if (state.route.name === "board" && prevSport === state.sport && !state.rows.length && !state.loading) {
+      fetchBoard({ append: false });
+    }
+    setSportTab();
   }
 
   // Filters
@@ -331,14 +389,20 @@
   listEl.addEventListener("click", (ev) => {
     const card = ev.target.closest("[data-player]");
     if (!card) return;
-    location.hash = `#/player/${card.dataset.player}?prop=${encodeURIComponent(card.dataset.prop)}&line=${encodeURIComponent(card.dataset.line)}`;
+    location.hash = `#/${state.sport}/player/${card.dataset.player}?prop=${encodeURIComponent(card.dataset.prop)}&line=${encodeURIComponent(card.dataset.line)}`;
   });
 
   $("more").addEventListener("click", () => fetchBoard({ append: true }));
-  $("back").addEventListener("click", () => { location.hash = "#/"; });
+  $("back").addEventListener("click", () => { location.hash = `#/${state.sport}`; });
 
-  document.querySelectorAll(".sport.soon").forEach((btn) => {
-    btn.addEventListener("click", () => toast(`${btn.dataset.sport.toUpperCase()} is coming soon.`));
+  document.querySelectorAll(".sport[data-sport]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (btn.classList.contains("soon")) {
+        toast(`${btn.dataset.sport.toUpperCase()} is coming soon.`);
+        return;
+      }
+      switchSport(btn.dataset.sport);
+    });
   });
 
   window.addEventListener("hashchange", applyRoute);

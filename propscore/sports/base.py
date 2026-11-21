@@ -49,6 +49,7 @@ class Player:
     position: str
     jersey: str
     headshot: str
+    role: str = "skater"  # "skater" or "goalie"
     injury_status: str | None = None
     injury_detail: str | None = None
     injury_comment: str | None = None
@@ -71,9 +72,20 @@ class GameLog:
     threes: int
     pra: int
     result: str | None = None
+    # Hockey (and future sports). Basketball leaves these at defaults.
+    goals: int = 0
+    shots: int = 0
+    blocked: int = 0
+    hits: int = 0
+    saves: int = 0
+    started: bool = False
 
-    def value(self, stat: str) -> int:
-        return int(getattr(self, stat))
+    def value(self, stat: str) -> float:
+        raw = getattr(self, stat, 0)
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return 0.0
 
     def to_dict(self) -> dict:
         d = asdict(self)

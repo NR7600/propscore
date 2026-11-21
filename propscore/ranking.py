@@ -135,12 +135,19 @@ def trend_score(
     return round(100.0 * raw, 1)
 
 
-def qualify(logs: list[GameLog]) -> tuple[list[GameLog], float] | None:
+def qualify(
+    logs: list[GameLog],
+    min_games: int = MIN_GAMES,
+    min_avg_minutes: float = MIN_AVG_MINUTES,
+    starts_only: bool = False,
+) -> tuple[list[GameLog], float] | None:
     played = _played(logs)
-    if len(played) < MIN_GAMES:
+    if starts_only:
+        played = [g for g in played if getattr(g, "started", False)]
+    if len(played) < min_games:
         return None
     avg_min = sum(g.minutes for g in played) / len(played)
-    if avg_min < MIN_AVG_MINUTES:
+    if min_avg_minutes and avg_min < min_avg_minutes:
         return None
     return played, avg_min
 
@@ -151,8 +158,16 @@ def rank_player_props(
     game: Game,
     props: list[str],
     sport: str = "nba",
+    min_games: int = MIN_GAMES,
+    min_avg_minutes: float = MIN_AVG_MINUTES,
+    starts_only: bool = False,
 ) -> list[PropRow]:
-    qualified = qualify(logs)
+    qualified = qualify(
+        logs,
+        min_games=min_games,
+        min_avg_minutes=min_avg_minutes,
+        starts_only=starts_only,
+    )
     if qualified is None:
         return []
     played, avg_min = qualified
@@ -228,6 +243,7 @@ def rank_slate(
     games: list[Game],
     props: list[str],
     sport: str = "nba",
+    qualification=None,
 ) -> list[PropRow]:
     game_by_team = {}
     for g in games:
@@ -240,7 +256,20 @@ def rank_slate(
         if not game:
             continue
         logs = logs_by_player.get(player.id) or []
-        rows.extend(rank_player_props(player, logs, game, props, sport=sport))
+        opts = qualification(player) if qualification else {}
+        player_props = opts.get("props") or props
+        rows.extend(
+            rank_player_props(
+                player,
+                logs,
+                game,
+                player_props,
+                sport=sport,
+                min_games=opts.get("min_games", MIN_GAMES),
+                min_avg_minutes=opts.get("min_avg_minutes", MIN_AVG_MINUTES),
+                starts_only=opts.get("starts_only", False),
+            )
+        )
 
     rows.sort(key=lambda r: (-r.score, -r.l10, -r.streak, r.player, r.line))
     return rows

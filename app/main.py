@@ -31,9 +31,10 @@ STATIC = Path(__file__).resolve().parent / "static"
 REFRESH_HOUR = int(os.environ.get("PROPSCORE_REFRESH_HOUR", "10"))
 SPORTS = [
     {"key": "nba", "name": "NBA", "available": True},
-    {"key": "nhl", "name": "NHL", "available": False, "status": "Coming soon"},
+    {"key": "nhl", "name": "NHL", "available": True},
     {"key": "nfl", "name": "NFL", "available": False, "status": "Coming soon"},
 ]
+AVAILABLE_SPORTS = [s["key"] for s in SPORTS if s["available"]]
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("propscore")
@@ -41,7 +42,7 @@ log = logging.getLogger("propscore")
 _refresh_lock = threading.Lock()
 _refresh_state: dict = {"running": False, "last": None, "error": None}
 
-app = FastAPI(title="PropScore", version="1.0.0", docs_url="/api/docs", redoc_url=None)
+app = FastAPI(title="Da Real Big Homie Props", version="1.1.0", docs_url="/api/docs", redoc_url=None)
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
 
@@ -72,11 +73,11 @@ def _board_date(sport: str, date: Optional[str]) -> str:
 
 @app.get("/health")
 def health():
-    dates = available_dates("nba")
     return {
         "ok": True,
         "today": today_et(),
-        "nba_dates": dates,
+        "nba_dates": available_dates("nba"),
+        "nhl_dates": available_dates("nhl"),
         "refresh": _refresh_state,
     }
 
@@ -134,48 +135,61 @@ def player(sport: str, player_id: str, date: Optional[str] = None):
     return payload
 
 
+def _sports_to_refresh(requested: str) -> list[str]:
+    key = (requested or "all").lower().strip()
+    if key in {"", "all"}:
+        return list(AVAILABLE_SPORTS)
+    return [_sport_or_404(key)]
+
+
 @app.post("/api/refresh")
 def refresh(
-    sport: str = "nba",
+    sport: str = "all",
     date: Optional[str] = None,
     x_refresh_token: Optional[str] = Header(default=None),
 ):
-    """Rebuild the board by running `python3 run.py <sport>`.
+    """Rebuild boards by running `python3 run.py <sport>`.
 
+    Pass sport=all (the default) to rebuild every available sport.
     If REFRESH_TOKEN is set in the environment, send it as X-Refresh-Token.
     """
     expected = os.environ.get("REFRESH_TOKEN", "").strip()
     if expected and x_refresh_token != expected:
         raise HTTPException(401, "Invalid or missing X-Refresh-Token")
-    sport = _sport_or_404(sport)
+    sports = _sports_to_refresh(sport)
     if _refresh_state["running"]:
         return JSONResponse({"ok": False, "status": "already_running"}, status_code=409)
-    thread = threading.Thread(target=_run_refresh, args=(sport, date), daemon=True)
+    thread = threading.Thread(target=_run_refresh_sports, args=(sports, date), daemon=True)
     thread.start()
-    return {"ok": True, "status": "started", "sport": sport, "date": date or today_et()}
+    return {"ok": True, "status": "started", "sports": sports, "date": date or today_et()}
 
 
-def _run_refresh(sport: str, date: Optional[str]) -> None:
+def _run_one_sport(sport: str, date: Optional[str]) -> None:
+    cmd = [sys.executable, str(ROOT / "run.py"), sport]
+    if date:
+        cmd.extend(["--date", date])
+    log.info("Refreshing board: %s", " ".join(cmd))
+    proc = subprocess.run(
+        cmd,
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        timeout=600,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr[-2000:] or proc.stdout[-2000:] or f"exit {proc.returncode}")
+
+
+def _run_refresh_sports(sports: list[str], date: Optional[str]) -> None:
     if not _refresh_lock.acquire(blocking=False):
         return
     _refresh_state["running"] = True
     _refresh_state["error"] = None
     started = datetime.now(ET)
     try:
-        cmd = [sys.executable, str(ROOT / "run.py"), sport]
-        if date:
-            cmd.extend(["--date", date])
-        log.info("Refreshing board: %s", " ".join(cmd))
-        proc = subprocess.run(
-            cmd,
-            cwd=str(ROOT),
-            capture_output=True,
-            text=True,
-            timeout=300,
-            check=False,
-        )
-        if proc.returncode != 0:
-            raise RuntimeError(proc.stderr[-2000:] or proc.stdout[-2000:] or f"exit {proc.returncode}")
+        for sport in sports:
+            _run_one_sport(sport, date)
         _refresh_state["last"] = datetime.now(ET).strftime("%Y-%m-%d %I:%M %p ET")
         log.info("Refresh finished in %ss", int((datetime.now(ET) - started).total_seconds()))
     except Exception as exc:
@@ -195,7 +209,7 @@ def _scheduler_loop() -> None:
             target += timedelta(days=1)
         time.sleep(max(1.0, (target - now).total_seconds()))
         try:
-            _run_refresh("nba", None)
+            _run_refresh_sports(list(AVAILABLE_SPORTS), None)
         except Exception:
             log.exception("Scheduled refresh failed")
 
@@ -206,11 +220,12 @@ def on_startup() -> None:
     (ROOT / "cache").mkdir(parents=True, exist_ok=True)
     thread = threading.Thread(target=_scheduler_loop, name="propscore-scheduler", daemon=True)
     thread.start()
-    # If today's board is missing (fresh deploy with no output/), generate it
+    # Fresh deploys have no output/: generate any missing today's boards
     # in the background so the first visit does not have to trigger a rebuild.
-    if today_et() not in available_dates("nba") and not _refresh_state["running"]:
-        log.info("No board for today (%s); generating in the background", today_et())
-        threading.Thread(target=_run_refresh, args=("nba", None), daemon=True).start()
+    missing = [s for s in AVAILABLE_SPORTS if today_et() not in available_dates(s)]
+    if missing and not _refresh_state["running"]:
+        log.info("No board for today (%s) in %s; generating in the background", today_et(), ", ".join(missing))
+        threading.Thread(target=_run_refresh_sports, args=(missing, None), daemon=True).start()
 
 
 # --- static PWA assets (after API routes) ---

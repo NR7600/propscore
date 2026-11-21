@@ -1,7 +1,7 @@
 {
-  "name": "PropScore",
-  "short_name": "PropScore",
-  "description": "NBA player prop trend research. 21+, research only.",
+  "name": "Da Real Big Homie Props",
+  "short_name": "BH Props",
+  "description": "NBA and NHL player prop trend research. 21+, research only.",
   "start_url": "/?source=pwa",
   "scope": "/",
   "display": "standalone",

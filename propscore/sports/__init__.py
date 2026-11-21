@@ -1,9 +1,11 @@
 """Sport adapters. Add a new sport by implementing sports/<name>.py and registering it here."""
 
 from .nba import NBA
+from .nhl import NHL
 
 SPORTS = {
     "nba": NBA,
+    "nhl": NHL,
 }
 
 
