@@ -33,7 +33,7 @@ REFRESH_HOUR = int(os.environ.get("PROPSCORE_REFRESH_HOUR", "10"))
 SPORTS = [
     {"key": "nba", "name": "NBA", "available": True},
     {"key": "nhl", "name": "NHL", "available": True},
-    {"key": "nfl", "name": "NFL", "available": False, "status": "Coming soon"},
+    {"key": "nfl", "name": "NFL", "available": True},
 ]
 AVAILABLE_SPORTS = [s["key"] for s in SPORTS if s["available"]]
 
@@ -43,7 +43,7 @@ log = logging.getLogger("propscore")
 _refresh_lock = threading.Lock()
 _refresh_state: dict = {"running": False, "last": None, "error": None}
 
-app = FastAPI(title="Da Real Big Homie Props", version="1.5.0", docs_url="/api/docs", redoc_url=None)
+app = FastAPI(title="Da Real Big Homie Props", version="1.6.0", docs_url="/api/docs", redoc_url=None)
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
 
@@ -79,8 +79,9 @@ def health():
         "today": today_et(),
         "nba_dates": available_dates("nba"),
         "nhl_dates": available_dates("nhl"),
+        "nfl_dates": available_dates("nfl"),
         "refresh": _refresh_state,
-        "features": "fgm-v1",
+        "features": "nfl-v1",
         "app": "Da Real Big Homie Props",
         "odds": odds_status(),
     }
@@ -201,7 +202,7 @@ def _run_one_sport(
         cwd=str(ROOT),
         capture_output=True,
         text=True,
-        timeout=600,
+        timeout=900,
         check=False,
     )
     if proc.returncode != 0:
@@ -220,8 +221,10 @@ def _run_refresh_sports(
     _refresh_state["error"] = None
     started = datetime.now(ET)
     try:
+        from propscore.slate_date import build_date_for
         for sport in sports:
-            _run_one_sport(sport, date, skip_odds=skip_odds, skip_pbp=skip_pbp)
+            sport_date = date or build_date_for(sport)
+            _run_one_sport(sport, sport_date, skip_odds=skip_odds, skip_pbp=skip_pbp)
         _refresh_state["last"] = datetime.now(ET).strftime("%Y-%m-%d %I:%M %p ET")
         log.info("Refresh finished in %ss", int((datetime.now(ET) - started).total_seconds()))
     except Exception as exc:
@@ -261,9 +264,10 @@ def on_startup() -> None:
     thread.start()
     # Fresh deploys have no output/: generate any missing today's boards
     # in the background so the first visit does not have to trigger a rebuild.
-    missing = [s for s in AVAILABLE_SPORTS if today_et() not in available_dates(s)]
+    from propscore.slate_date import build_date_for
+    missing = [s for s in AVAILABLE_SPORTS if build_date_for(s) not in available_dates(s)]
     if missing and not _refresh_state["running"]:
-        log.info("No board for today (%s) in %s; generating in the background", today_et(), ", ".join(missing))
+        log.info("No board for the upcoming slate in %s; generating in the background", ", ".join(missing))
         # Render's free disk is wiped on every sleep/restart. Auto-fetching
         # odds on boot would re-spend the daily credit budget each wake.
         # Manual and scheduled refresh still fetch (subject to the cap).

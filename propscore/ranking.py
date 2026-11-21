@@ -139,6 +139,7 @@ class PropRow:
     l8_games: int = 0
     l15_hits: int = 0
     l15_games: int = 0
+    prior_games: int = 0
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -241,13 +242,18 @@ def qualify(
     min_avg_minutes: float = MIN_AVG_MINUTES,
     starts_only: bool = False,
     slate_date: str = "",
+    min_season_games: int | None = None,
 ) -> tuple[list[GameLog], float] | None:
     played = _played(logs, before_date=slate_date)
     if starts_only:
         played = [g for g in played if getattr(g, "started", False)]
-    if len(played) < min_games:
+    current = [g for g in played if not getattr(g, "prior_season", False)]
+    needed = min_season_games if min_season_games is not None else min_games
+    if len(current) < needed:
         return None
-    avg_min = sum(g.minutes for g in played) / len(played)
+    if min_season_games is None and len(played) < min_games:
+        return None
+    avg_min = sum(g.minutes for g in played) / len(played) if played else 0.0
     if min_avg_minutes and avg_min < min_avg_minutes:
         return None
     return played, avg_min
@@ -263,6 +269,8 @@ def rank_player_props(
     min_avg_minutes: float = MIN_AVG_MINUTES,
     starts_only: bool = False,
     slate_date: str = "",
+    min_season_games: int | None = None,
+    props_from_logs=None,
 ) -> list[PropRow]:
     qualified = qualify(
         logs,
@@ -270,10 +278,15 @@ def rank_player_props(
         min_avg_minutes=min_avg_minutes,
         starts_only=starts_only,
         slate_date=slate_date,
+        min_season_games=min_season_games,
     )
     if qualified is None:
         return []
     played, avg_min = qualified
+    if callable(props_from_logs):
+        props = props_from_logs(played) or []
+        if not props:
+            return []
     is_home = player.team_id == game.home_id
     opponent = game.away_abbr if is_home else game.home_abbr
     venue_flag = "H" if is_home else "A"
@@ -312,7 +325,9 @@ def rank_player_props(
                 l10_r, l10_h, l10_n = _hit_rate(_window(played, 10), prop, line, side)
                 l15_r, l15_h, l15_n = _hit_rate(_window(played, 15), prop, line, side)
                 l20_r, l20_h, l20_n = _hit_rate(_window(played, 20), prop, line, side)
-                sea_r, sea_h, sea_n = _hit_rate(played, prop, line, side)
+                current = [g for g in played if not getattr(g, "prior_season", False)]
+                sea_r, sea_h, sea_n = _hit_rate(current or played, prop, line, side)
+                prior_n = sum(1 for g in played if getattr(g, "prior_season", False))
                 if len(venue_logs) >= VENUE_MIN_GAMES:
                     ven_r, ven_h, ven_n = _hit_rate(venue_logs, prop, line, side)
                 else:
@@ -395,6 +410,7 @@ def rank_player_props(
                         injury_detail=player.injury_detail,
                         position=player.position,
                         headshot=player.headshot,
+                        prior_games=prior_n,
                         line_source=offer.source,
                         american_odds=price,
                         book=offer.book,
@@ -426,6 +442,11 @@ def rank_slate(
         logs = logs_by_player.get(player.id) or []
         opts = qualification(player) if qualification else {}
         player_props = opts.get("props") or props
+        role_fn = None
+        if opts.get("role_filter") and hasattr(qualification, "__self__"):
+            sport_obj = qualification.__self__
+            if hasattr(sport_obj, "props_for_logs"):
+                role_fn = sport_obj.props_for_logs
         rows.extend(
             rank_player_props(
                 player,
@@ -437,6 +458,8 @@ def rank_slate(
                 min_avg_minutes=opts.get("min_avg_minutes", MIN_AVG_MINUTES),
                 starts_only=opts.get("starts_only", False),
                 slate_date=slate_date,
+                min_season_games=opts.get("min_season_games"),
+                props_from_logs=role_fn,
             )
         )
 

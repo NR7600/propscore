@@ -2,10 +2,12 @@
 
 from .nba import NBA
 from .nhl import NHL
+from .nfl import NFL
 
 SPORTS = {
     "nba": NBA,
     "nhl": NHL,
+    "nfl": NFL,
 }
 
 

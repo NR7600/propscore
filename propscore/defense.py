@@ -10,12 +10,14 @@ log = logging.getLogger("propscore")
 STANDINGS_URL = {
     "nba": "https://site.api.espn.com/apis/v2/sports/basketball/nba/standings",
     "nhl": "https://site.api.espn.com/apis/v2/sports/hockey/nhl/standings",
+    "nfl": "https://site.api.espn.com/apis/v2/sports/football/nfl/standings",
 }
 
 # Rank 1 = fewest points/goals allowed (toughest over matchup).
 OUT_STAT = {
     "nba": ("avgPointsAgainst", "PPG allowed"),
     "nhl": ("pointsAgainst", "goals allowed"),
+    "nfl": ("avgPointsAgainst", "PPG allowed"),
 }
 
 
@@ -76,7 +78,7 @@ def fetch_defense_ranks(sport: str, client) -> dict[str, dict[str, Any]]:
         if not abbr:
             continue
         stats = _stat_map(entry)
-        if key == "nba":
+        if key in {"nba", "nfl"}:
             value = stats.get("avgPointsAgainst")
             stat_label = "PPG allowed"
         else:

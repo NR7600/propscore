@@ -86,6 +86,22 @@ class GameLog:
     started: bool = False
     steals: int = 0
     fgm: int = 0
+    # Football. Basketball / hockey leave these at defaults.
+    pass_yds: int = 0
+    pass_td: int = 0
+    completions: int = 0
+    pass_att: int = 0
+    ints: int = 0
+    rush_yds: int = 0
+    rush_att: int = 0
+    rush_td: int = 0
+    receptions: int = 0
+    rec_yds: int = 0
+    rec_td: int = 0
+    targets: int = 0
+    anytime_td: int = 0
+    prior_season: bool = False
+    season_year: int = 0
 
     def value(self, stat: str) -> float:
         if stat == "blocks":
@@ -98,6 +114,10 @@ class GameLog:
             raw = self.rebounds + self.assists
         elif stat == "pra":
             raw = self.pra if self.pra else (self.points + self.rebounds + self.assists)
+        elif stat == "rush_rec_yds":
+            raw = self.rush_yds + self.rec_yds
+        elif stat == "anytime_td":
+            raw = self.anytime_td if self.anytime_td else (self.rush_td + self.rec_td)
         else:
             raw = getattr(self, stat, 0)
         try:

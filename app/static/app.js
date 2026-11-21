@@ -33,30 +33,6 @@
     loading: false,
   };
 
-  const SLIP_KEY = "bhp-slip-v1";
-
-  function loadSlip() {
-    try {
-      return JSON.parse(localStorage.getItem(SLIP_KEY) || "[]");
-    } catch {
-      return [];
-    }
-  }
-  function saveSlip(legs) {
-    localStorage.setItem(SLIP_KEY, JSON.stringify(legs));
-    renderSlip();
-  }
-  function slipId(row) {
-    return [row.player_id, row.prop, row.side, row.line, row.event_id].join(":");
-  }
-  function toast(msg) {
-    const el = $("toast");
-    el.textContent = msg;
-    el.hidden = false;
-    clearTimeout(toast._t);
-    toast._t = setTimeout(() => { el.hidden = true; }, 1800);
-  }
-
   function pct(rate) {
     return Math.round((rate || 0) * 100);
   }
@@ -77,15 +53,32 @@
     return row.game || `${row.team} ${venueWord(row)} ${row.opponent}`;
   }
 
+
+  function firstMeta(sport) {
+    if (sport === "nhl") return { key: "first_goal", chip: "1G (First Goal)", all: "All Stats (No 1G)", title: "First Goal" };
+    if (sport === "nfl") return { key: "first_td", chip: "1TD (First TD)", all: "All Stats (No 1TD)", title: "First TD" };
+    return { key: "first_basket", chip: "1FG (First Basket)", all: "All Stats (No 1FG)", title: "First FGM" };
+  }
+  function isFirstProp(prop) {
+    return prop === "first_basket" || prop === "first_goal" || prop === "first_td";
+  }
+  function formatSlateDate(iso) {
+    if (!iso) return "";
+    const [y, m, d] = iso.split("-").map(Number);
+    if (!y || !m || !d) return iso;
+    const dt = new Date(y, m - 1, d);
+    return dt.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+  }
+
   function parseHash() {
     const raw = (location.hash || "#/").replace(/^#/, "");
     const parts = raw.split("/").filter(Boolean);
-    const sport = (parts[0] || "nba").toLowerCase();
-    if (sport === "nfl") return { sport: "nfl", playerId: null };
+    const sportRaw = (parts[0] || "nba").toLowerCase();
+    const sport = ["nba", "nhl", "nfl"].includes(sportRaw) ? sportRaw : "nba";
     const playerId = parts[1] === "player" && parts[2] ? parts[2] : null;
     const params = new URLSearchParams(raw.split("?")[1] || location.hash.split("?")[1] || "");
     return {
-      sport: sport === "nhl" ? "nhl" : "nba",
+      sport,
       playerId,
       prop: params.get("prop") || "",
       side: params.get("side") || "",
@@ -138,16 +131,6 @@
   }
 
   async function loadBoard({ append } = {}) {
-    if (state.sport === "nfl") {
-      $("list").innerHTML = `<p class="soon-msg">NFL is coming soon.</p>`;
-      $("count").textContent = "";
-      $("empty").hidden = true;
-      $("more").hidden = true;
-      $("top-wrap").hidden = true;
-      $("show-more-trends").hidden = true;
-      $("more-block").hidden = true;
-      return;
-    }
     if (!append) {
       state.page = 1;
       state.rows = [];
@@ -169,10 +152,14 @@
       }
       if (append) state.rows = state.rows.concat(data.rows || []);
       else state.rows = data.rows || [];
-      const first = !!data.first_mode || state.stat === "first_basket" || state.stat === "first_goal";
-      const firstLabel = state.sport === "nhl" ? "First Goal" : "First FGM";
+      const meta = firstMeta(state.sport);
+      const first = !!data.first_mode || isFirstProp(state.stat);
+      const firstLabel = meta.title;
       $("board-view").classList.toggle("first-mode", first);
-      $("date-line").textContent = "Updated Daily • Ranked By Trend Strength";
+      const slate = formatSlateDate(data.date);
+      $("date-line").textContent = slate
+        ? `${slate} slate • Ranked By Trend Strength`
+        : "Updated Daily • Ranked By Trend Strength";
       $("view-note").textContent = data.view_label || "";
       const topTitle = first ? `Top 10 ${firstLabel}` : "Top 10 Trends";
       $("top-title").textContent = topTitle;
@@ -218,9 +205,10 @@
 
   function renderStatPills() {
     const host = $("stats");
-    const firstKey = state.sport === "nhl" ? "first_goal" : "first_basket";
-    const firstLabel = state.sport === "nhl" ? "1G (First Goal)" : "1FG (First Basket)";
-    const allLabel = state.sport === "nhl" ? "All Stats (No 1G)" : "All Stats (No 1FG)";
+    const fm = firstMeta(state.sport);
+    const firstKey = fm.key;
+    const firstLabel = fm.chip;
+    const allLabel = fm.all;
     const items = [
       { key: "", label: allLabel },
       { key: firstKey, label: firstLabel },
@@ -254,7 +242,7 @@
   }
 
   function cardHTML(row, rank, featured) {
-    const first = row.prop === "first_basket" || row.prop === "first_goal" || row.first_kind;
+    const first = isFirstProp(row.prop) || row.first_kind;
     const over = (row.side || "over") === "over";
     const cell = (h, n, r) => {
       if (!n) return `<div class="rate muted">—</div>`;
@@ -286,6 +274,7 @@
       const w = row.without[0];
       chips.push(`W/O ${w.player.split(" ").slice(-1)[0]} ${pct(w.rate)}%`);
     }
+    if (row.prior_games) chips.push(`L15/L20 include ${row.prior_games} game${row.prior_games === 1 ? "" : "s"} from last season`);
     if (first) {
       if (row.season_games) chips.unshift(`${frac(row.season_hits, row.season_games)} games (${pct(row.season)}%)`);
       if (row.started_last) chips.push("Starter last game");
@@ -295,7 +284,6 @@
         chips.push(`Team ${tipName} ${frac(row.tip_wins, row.tip_games)} ${pct(row.tip_win_rate)}%`);
       }
     }
-    const inSlip = loadSlip().some((l) => l.id === slipId(row));
     const sideCls = first ? "first" : (over ? "" : "under");
     const sideTxt = first ? (row.prop_label || "1st") : (over ? "Over" : "Under");
     return `<article class="card ${featured ? "top-card" : ""}" data-player="${row.player_id}" data-prop="${row.prop}" data-side="${row.side}" data-line="${row.line}">
@@ -316,13 +304,6 @@
       <div class="card-foot">
         <button type="button" class="view-log" data-open="${row.player_id}">VIEW GAME LOG</button>
         <button type="button" class="full-hist" data-open="${row.player_id}">full history &gt;</button>
-        <button type="button" class="add-slip" data-slip="${encodeURIComponent(JSON.stringify({
-          id: slipId(row),
-          player: row.player,
-          label: row.line_label,
-          game: row.game,
-          sport: state.sport,
-        }))}">${inSlip ? "On slip" : "+ Slip"}</button>
       </div>
     </article>`;
   }
@@ -388,7 +369,7 @@
     const game = data.game || {};
     const next = game.label || row.game || "";
     const at = row.venue === "H" ? "vs" : "@";
-    const first = row.prop === "first_basket" || row.prop === "first_goal" || row.first_kind;
+    const first = isFirstProp(row.prop) || row.first_kind;
     const sub = first
       ? escapeHtml(row.prop_full || row.prop_label)
       : `${escapeHtml(row.prop_full || row.prop_label)} vs ${escapeHtml(String(row.display_line))} ${row.line_source === "est" ? "est. line" : "line"}`;
@@ -417,7 +398,7 @@
       .map((r) => {
         const key = `${r.prop}:${r.side}:${r.line}`;
         const on = key === state.selectedKey ? "on" : "";
-        const firstLine = r.prop === "first_basket" || r.prop === "first_goal";
+        const firstLine = isFirstProp(r.prop);
         const label = firstLine
           ? (r.prop_label || "1st")
           : `${r.side === "under" ? "Under" : "Over"} ${r.display_line}`;
@@ -445,10 +426,6 @@
     return `<div class="rate-box"><div class="k">${label}</div><div class="v">${games ? pct(rate) + "%" : "—"}</div><div class="s">${extra}</div></div>`;
   }
 
-  function isFirstProp(prop) {
-    return prop === "first_basket" || prop === "first_goal";
-  }
-
   function logValue(log, prop) {
     if (isFirstProp(prop)) return log.first_score == null ? null : Number(log.first_score);
     if (prop === "pts_reb") return (log.points || 0) + (log.rebounds || 0);
@@ -457,6 +434,8 @@
     if (prop === "pra") return log.pra ?? ((log.points || 0) + (log.rebounds || 0) + (log.assists || 0));
     if (prop === "blocks") return log.blocked || 0;
     if (prop === "threes") return log.threes || 0;
+    if (prop === "rush_rec_yds") return (log.rush_yds || 0) + (log.rec_yds || 0);
+    if (prop === "anytime_td") return log.anytime_td ?? ((log.rush_td || 0) + (log.rec_td || 0));
     return log[prop] ?? 0;
   }
 
@@ -508,17 +487,21 @@
       Home ${row.home_games ? frac(row.home_hits, row.home_games) + " " + pct(row.home_hit) + "%" : "—"}
       · Away ${row.away_games ? frac(row.away_hits, row.away_games) + " " + pct(row.away_hit) + "%" : "—"}
       · Tonight: ${row.venue === "H" ? "Home" : "Away"}</div>`);
-    const unit = state.sport === "nhl" ? "TOI" : "Minutes";
-    const trend = (row.minutes_trend && row.minutes_trend.length)
-      ? row.minutes_trend
-      : ((state.player.logs || []).slice(0, 10).map((g) => g.minutes || 0));
-    const maxM = Math.max(...trend, 1);
-    const spark = trend
-      .map((m) => `<span class="min-bar" style="height:${Math.max(2, Math.round((m / maxM) * 36))}px" title="${m}"></span>`)
-      .join("");
-    bits.push(`<div class="ctx"><div class="lbl">${unit} trend</div>
-      L5 ${row.min_l5 ?? "—"} · L10 ${row.min_l10 ?? "—"} · Season ${row.avg_minutes ?? "—"}
-      <div class="min-trend">${spark}</div></div>`);
+    if (state.sport !== "nfl") {
+      const unit = state.sport === "nhl" ? "TOI" : "Minutes";
+      const trend = (row.minutes_trend && row.minutes_trend.length)
+        ? row.minutes_trend
+        : ((state.player.logs || []).slice(0, 10).map((g) => g.minutes || 0));
+      const maxM = Math.max(...trend, 1);
+      const spark = trend
+        .map((m) => `<span class="min-bar" style="height:${Math.max(2, Math.round((m / maxM) * 36))}px" title="${m}"></span>`)
+        .join("");
+      bits.push(`<div class="ctx"><div class="lbl">${unit} trend</div>
+        L5 ${row.min_l5 ?? "—"} · L10 ${row.min_l10 ?? "—"} · Season ${row.avg_minutes ?? "—"}
+        <div class="min-trend">${spark}</div></div>`);
+    } else if (row.prior_games) {
+      bits.push(`<div class="ctx"><div class="lbl">Sample</div>Season windows use this season; L15/L20 include ${row.prior_games} game${row.prior_games === 1 ? "" : "s"} from last season.</div>`);
+    }
     const rest = restLabel(row) || "—";
     bits.push(`<div class="ctx"><div class="lbl">Rest</div>${escapeHtml(rest)}</div>`);
     if (row.opp_def_label) {
@@ -633,22 +616,6 @@
       <div class="updated">Injury comments from ESPN — not a live news wire.</div>`;
   }
 
-  function renderSlip() {
-    const legs = loadSlip();
-    $("slip").hidden = false;
-    $("slip-count").textContent = String(legs.length);
-    const body = $("slip-body");
-    if (!legs.length) {
-      $("slip-legs").innerHTML = `<p class="slip-note">Add trends from a card. Saved on this device.</p>`;
-      return;
-    }
-    $("slip-legs").innerHTML = legs
-      .map(
-        (l, i) => `<div class="slip-leg"><div><b>${escapeHtml(l.player)}</b><div>${escapeHtml(l.label)}</div><div class="slip-note">${escapeHtml(l.game || "")}</div></div>
-        <button type="button" data-remove="${i}" aria-label="Remove">✕</button></div>`
-      )
-      .join("");
-  }
 
   function openPlayerFromCard(card) {
     const id = card.dataset.player;
@@ -661,16 +628,6 @@
     document.querySelectorAll(".sport").forEach((btn) => {
       btn.addEventListener("click", () => {
         const sport = btn.dataset.sport;
-        if (sport === "nfl") {
-          document.querySelectorAll(".sport").forEach((b) => b.classList.toggle("on", b.dataset.sport === "nfl"));
-          state.sport = "nfl";
-          setHash("nfl");
-          $("board-view").hidden = false;
-          $("player-view").hidden = true;
-          $("date-line").textContent = "NFL is coming soon";
-          loadBoard();
-          return;
-        }
         state.sport = sport;
         state.stat = "";
         state.game = "";
@@ -739,21 +696,6 @@
       $("more").hidden = state.page >= state.totalPages;
     });
     function onBoardCardClick(e) {
-      const add = e.target.closest("[data-slip]");
-      if (add) {
-        e.preventDefault();
-        e.stopPropagation();
-        const leg = JSON.parse(decodeURIComponent(add.dataset.slip));
-        const legs = loadSlip();
-        if (legs.some((l) => l.id === leg.id)) toast("Already on your slip");
-        else {
-          legs.push(leg);
-          saveSlip(legs);
-          toast("Added to slip");
-          add.textContent = "On slip";
-        }
-        return;
-      }
       const open = e.target.closest("[data-open], .card");
       const card = e.target.closest(".card");
       if (card && (e.target.closest("[data-open]") || e.target.closest(".card-top, .market, .rates-grid, .streaks"))) {
@@ -797,17 +739,6 @@
         renderPanel();
       });
     });
-    $("slip-toggle").addEventListener("click", () => {
-      $("slip-body").hidden = !$("slip-body").hidden;
-    });
-    $("slip-clear").addEventListener("click", () => saveSlip([]));
-    $("slip-legs").addEventListener("click", (e) => {
-      const btn = e.target.closest("[data-remove]");
-      if (!btn) return;
-      const legs = loadSlip();
-      legs.splice(Number(btn.dataset.remove), 1);
-      saveSlip(legs);
-    });
     $("install-dismiss").addEventListener("click", () => {
       $("install").hidden = true;
       localStorage.setItem("bhp-install-dismissed", "1");
@@ -832,9 +763,9 @@
 
   async function onRoute() {
     const route = parseHash();
-    state.sport = route.sport === "nfl" ? "nfl" : route.sport;
+    state.sport = route.sport;
     document.querySelectorAll(".sport").forEach((b) => b.classList.toggle("on", b.dataset.sport === state.sport));
-    if (route.playerId && state.sport !== "nfl") {
+    if (route.playerId) {
       await loadPlayer(route.playerId, route);
     } else {
       $("player-view").hidden = true;
@@ -848,7 +779,6 @@
   }
 
   bind();
-  renderSlip();
   maybeInstall();
   onRoute();
 })();

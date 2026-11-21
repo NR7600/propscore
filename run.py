@@ -64,8 +64,14 @@ def main() -> int:
     if not use_cache:
         client = HttpClient(CACHE_DIR / args.sport.lower() / f"{date}_fresh")
 
-    if args.sport.lower() not in {"nba", "nhl"}:
-        raise SystemExit(f"{args.sport} is not implemented yet. Available: nba, nhl")
+    if args.sport.lower() not in {"nba", "nhl", "nfl"}:
+        raise SystemExit(f"{args.sport} is not implemented yet. Available: nba, nhl, nfl")
+    if not args.date and args.sport.lower() == "nfl":
+        from propscore.sports.nfl import date_with_games
+        date = date_with_games(client, date)
+        # Rebuild the client cache dir for the resolved slate date.
+        if date != (args.date or today_et()):
+            client = HttpClient(CACHE_DIR / args.sport.lower() / date) if use_cache else HttpClient(CACHE_DIR / args.sport.lower() / f"{date}_fresh")
     sport = get_sport(args.sport, client)
 
     print(f"Fetching {sport.display_name} slate for {date} (America/New_York)...")
@@ -165,7 +171,32 @@ def main() -> int:
     )
 
     notes = []
-    if sport.key == "nhl":
+    if sport.key == "nfl":
+        notes.append(
+            "Data from ESPN public JSON (NFL scoreboard, rosters, injuries, player gamelogs). "
+            "Season year 2026 is the 2026 regular season. Only skill positions (QB, RB, FB, WR, TE) "
+            "are ranked. Players need 3 games this season and a meaningful role "
+            "(pass attempts, carries, or targets). When this season has fewer than 20 games, "
+            "last season pads L15/L20 and is counted in those windows."
+        )
+        notes.append(
+            "NFL sportsbook markets are not purchased on the free 15-credit Odds API budget. "
+            "Add an nfl: section to ODDS_MARKETS after a plan upgrade to fetch live lines. "
+            "Until then every prop uses a player-specific estimated line."
+        )
+        notes.append(
+            "First TD is the first touchdown of the game (field goals and safeties do not count), "
+            "taken from ESPN scoring plays. Compact extracts are cached and only new games are fetched."
+        )
+        sources = [
+            "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard",
+            "https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/{id}/roster",
+            "https://site.api.espn.com/apis/site/v2/sports/football/nfl/injuries",
+            "https://site.web.api.espn.com/apis/common/v3/sports/football/nfl/athletes/{id}/gamelog",
+            "https://site.api.espn.com/apis/site/v2/sports/football/nfl/summary?event={id}",
+            "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/events (free); /events/{id}/odds (credits)",
+        ]
+    elif sport.key == "nhl":
         notes.append(
             "Data from ESPN public JSON (NHL scoreboard, rosters, injuries, player gamelogs). "
             "Season year 2027 = 2026-27. Skater logs include goals, assists, points, shots, "

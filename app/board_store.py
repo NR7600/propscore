@@ -99,6 +99,7 @@ ROW_FIELDS = (
     "started_games",
     "started_last",
     "first_kind",
+    "prior_games",
 )
 
 
@@ -126,6 +127,9 @@ def resolve_date(sport: str, date: str | None) -> str | None:
     today = today_et()
     if today in dates:
         return today
+    future = [d for d in dates if d >= today]
+    if future:
+        return future[0]
     return dates[-1]
 
 
@@ -162,7 +166,7 @@ class BoardStore:
             "date": data.get("date", date),
             "timezone": data.get("timezone", "America/New_York"),
             "generated_at": data.get("generated_at"),
-            "stale": data.get("date") != today_et(),
+            "stale": bool(data.get("date") and data.get("date") < today_et()),
             "available_dates": available_dates(sport),
             "games": data.get("games") or [],
             "row_count": len(data.get("rows") or []),
@@ -230,12 +234,10 @@ class BoardStore:
             "date": data.get("date", date),
             "timezone": data.get("timezone", "America/New_York"),
             "generated_at": data.get("generated_at"),
-            "stale": data.get("date") != today_et(),
+            "stale": bool(data.get("date") and data.get("date") < today_et()),
             "view": "first_score" if first_mode else ("value" if view == "value" else "all"),
             "view_label": (
-                "Ranked 1-10 by trend strength: L4/L5/L8/L10/L15/L20 hit rates "
-                "plus game and home/away streaks. First FGM is the first field "
-                "goal of the game (free throws do not count)."
+                _first_view_label(sport)
                 if first_mode
                 else _view_label(view, min_l10)
             ),
@@ -265,7 +267,7 @@ class BoardStore:
             "first_score_meta": data.get("first_score_meta") or {},
             "first_mode": first_mode,
             "games_remaining": _games_remaining(data.get("games") or []),
-            "slate_message": _slate_message(data.get("games") or [], first_mode, len(top_out) + total),
+            "slate_message": _slate_message(data.get("games") or [], first_mode, len(top_out) + total, sport=sport),
         }
 
     def player(self, sport: str, date: str, player_id: str) -> dict[str, Any] | None:
@@ -455,7 +457,7 @@ def _compact_row(row: dict[str, Any]) -> dict[str, Any]:
 
 def _is_first_tab(tab: str, stat: str) -> bool:
     token = (tab or stat or "").strip().lower()
-    return token in {"first", "first_score", "first_basket", "first_goal"}
+    return token in {"first", "first_score", "first_basket", "first_goal", "first_td"}
 
 
 def _row_id(row: dict[str, Any]) -> tuple:
@@ -529,21 +531,34 @@ def _games_remaining(games: list[dict[str, Any]]) -> int:
     return sum(1 for g in games if not _game_is_final(g))
 
 
-def _slate_message(games: list[dict[str, Any]], first_mode: bool, row_count: int) -> str:
+def _first_view_label(sport: str) -> str:
+    base = (
+        "Ranked 1-10 by trend strength: L4/L5/L8/L10/L15/L20 hit rates "
+        "plus game and home/away streaks. "
+    )
+    if sport == "nfl":
+        return base + "First TD is the first touchdown of the game (field goals and safeties do not count)."
+    if sport == "nhl":
+        return base + "First Goal is the first goal of the game."
+    return base + "First FGM is the first field goal of the game (free throws do not count)."
+
+
+def _slate_message(games: list[dict[str, Any]], first_mode: bool, row_count: int, sport: str = "nba") -> str:
     if not first_mode:
         return ""
     remaining = _games_remaining(games)
     if row_count > 0:
         return ""
+    kind = {"nfl": "First-TD", "nhl": "First-goal"}.get(sport, "First-basket")
     if remaining > 0:
         return (
-            "First-basket trends are still generating, or play-by-play "
+            f"{kind} trends are still generating, or play-by-play "
             "has not loaded yet. Keep this tab open and refresh in a minute "
-            f"— {remaining} game(s) still on tonight's slate."
+            f"— {remaining} game(s) still on this slate."
         )
     if games:
-        return "No games left today. Check back tomorrow for the next slate."
-    return "No games on tonight's slate."
+        return "No games left on this slate. Check back tomorrow for the next one."
+    return "No games on this slate."
 
 
 

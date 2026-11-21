@@ -40,7 +40,7 @@ button, input { font: inherit; color: inherit; }
 .brand img { border-radius: 7px; flex: none; }
 .brand .accent { color: var(--accent); }
 .sports { display: flex; gap: 4px; }
-.sport, .pill, .trend-tab, .detail-tab, .game-chip, .more, .back, .add-slip, .slip-toggle {
+.sport, .pill, .trend-tab, .detail-tab, .game-chip, .more, .back {
   border: 1px solid var(--line); background: var(--card); border-radius: 999px;
   padding: 6px 11px; cursor: pointer;
 }
@@ -97,11 +97,11 @@ button, input { font: inherit; color: inherit; }
 }
 .range { flex: 1 1 160px; }
 .range input { flex: 1; accent-color: var(--accent); }
-.view-note, .count, .status, .empty, .legal, .slip-note {
+.view-note, .count, .status, .empty, .legal {
   color: var(--muted); font-size: 12px;
 }
 .count, .view-note { margin: 4px 14px; }
-.list { padding: 0 14px 90px; display: flex; flex-direction: column; gap: 10px; }
+.list { padding: 0 14px 28px; display: flex; flex-direction: column; gap: 10px; }
 .pager { padding: 0 14px 40px; text-align: center; }
 .more { width: 100%; padding: 12px; font-weight: 700; }
 .legal { text-align: center; padding: 8px 14px calc(16px + var(--safe-bottom)); }
@@ -165,9 +165,8 @@ button, input { font: inherit; color: inherit; }
   font-weight: 800; letter-spacing: 0.04em; font-size: 12px; cursor: pointer;
   padding: 4px;
 }
-.add-slip { font-size: 12px; font-weight: 700; padding: 5px 10px; }
 
-#player-view { padding: 8px 14px 120px; }
+#player-view { padding: 8px 14px 28px; }
 .back { margin: 6px 0 10px; }
 .player-head h1 { margin: 0; font-size: 22px; }
 .player-head .sub { color: var(--accent); font-weight: 700; margin: 4px 0 0; }
@@ -258,28 +257,6 @@ table.box tr.miss td:first-child { color: var(--miss); }
 .min-trend { display: flex; align-items: flex-end; gap: 3px; height: 36px; margin-top: 6px; }
 .min-bar { flex: 1; background: #2a6b4a; border-radius: 2px; min-height: 2px; }
 
-.slip {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
-  padding: 0 12px calc(10px + var(--safe-bottom));
-  pointer-events: none;
-}
-.slip-toggle, .slip-body { pointer-events: auto; }
-.slip-toggle {
-  display: block; margin: 0 auto; background: var(--accent); color: #07140c;
-  border: 0; font-weight: 800; padding: 10px 18px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
-}
-.slip-body {
-  background: #10131a; border: 1px solid var(--line); border-radius: 16px 16px 0 0;
-  padding: 12px; margin-top: 8px; max-height: 45vh; overflow: auto;
-}
-.slip-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-.slip-head button { background: none; border: 0; color: var(--miss); font-weight: 700; cursor: pointer; }
-.slip-leg {
-  display: flex; justify-content: space-between; gap: 8px;
-  padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px;
-}
-.slip-leg button { background: none; border: 0; color: var(--muted); cursor: pointer; }
 
 .install {
   margin: 8px 14px 20px; background: var(--card); border: 1px solid var(--line);

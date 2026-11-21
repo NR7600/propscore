@@ -1,14 +1,13 @@
 # Da Real Big Homie Props
 
-A Slipscore-style player prop research app (the code and repo are still named `propscore`). It pulls tonight’s NBA or NHL slate,
-recent game logs, and injury tags, then ranks standard over **and** under
+A Slipscore-style player prop research app (the code and repo are still named `propscore`). It pulls the NBA, NHL, or NFL slate,
+recent game logs, and injury tags, then ranks over **and** under
 lines by trend strength. Each Over/Under tab leads with a ranked Top 10
-(one best trend per player, live sportsbook lines preferred). NBA First FGM (the 1FG chip) and NHL First Goal are built from ESPN play-by-play:
-the first field goal or goal of the game (free throws do not count). Compact PBP extracts are
-cached and only new games are fetched. The player page shows that player’s
+(one best trend per player). Missing sportsbook numbers use a player-specific estimated line (labeled est. line). NBA First FGM (the 1FG chip), NHL First Goal, and NFL First TD (the 1TD chip) are built from ESPN play-by-play:
+the first field goal, goal, or touchdown of the game (free throws, field goals, and safeties do not count). Compact PBP extracts are
+cached and only new games are fetched. On Saturday the NFL board looks ahead to Sunday’s slate. The player page shows that player’s
 best few props (max one line per stat, about 4–6), with extra lines behind
-a toggle, plus a hit/miss bar chart, box score, both-team injuries, and
-an on-device slip builder. Use it in the browser or install it to a
+a toggle, plus a hit/miss bar chart, box score, and both-team injuries. Use it in the browser or install it to a
 phone’s Home Screen.
 
 A sourced inventory of Slipscore’s public features is in
@@ -23,6 +22,7 @@ python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 .venv/bin/python run.py nba          # (re)build tonight’s NBA board
 .venv/bin/python run.py nhl          # (re)build tonight’s NHL board
+.venv/bin/python run.py nfl          # (re)build the upcoming NFL slate
 .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
@@ -67,7 +67,7 @@ the easiest threshold. **All / Over / Under** tabs, **100% Trends**, and
 | `GET /api/nba/board` | Paginated ranked props. Query: `date`, `stat`, `game`, `min_l10`, `hide_out`, `hide_gimme`, `view=value\|all`, `side=over\|under`, `perfect`, `sort=score\|streak`, `q`, `page`, `page_size` |
 | `GET /api/nba/player/{id}` | Player bio, injury, last-20 logs, and all of their lines |
 | `GET /api/nba/meta` | Games, date, generated-at |
-| `GET /api/sports` | NBA and NHL live; NFL marked coming soon |
+| `GET /api/sports` | NBA, NHL, and NFL |
 | `POST /api/refresh` | Rebuild the board (`X-Refresh-Token` if `REFRESH_TOKEN` is set) |
 | `GET /health` | Liveness, plus `nba_dates` and `nhl_dates` |
 

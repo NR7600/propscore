@@ -58,7 +58,8 @@ On the free Starter plan (500 credits/month) the defaults are:
 
 - `ODDS_DAILY_BUDGET=15` (15 × 30 days = 450, plus a 30-credit reserve)
 - Market order: NBA `player_points`, `player_first_basket`, then
-  rebounds / assists / threes / PRA; NHL only if credits remain
+  rebounds / assists / threes / PRA; NHL only if credits remain.
+  NFL markets are **not** purchased on the free plan.
 - A typical 6-game NBA night spends 12 credits on points + first
   basket and stops. Other stats use estimated lines that day.
 
@@ -72,6 +73,13 @@ ODDS_DAILY_BUDGET=80
 That is enough to walk further down the market list (rebounds, assists,
 threes, PRA, then NHL). You do not have to change code.
 
+NFL live lines stay off until you add an `nfl:` section, so the 15-credit
+daily budget keeps going to NBA first:
+
+```
+ODDS_MARKETS=nba:player_points,player_first_basket,player_rebounds,player_assists,player_threes,player_points_rebounds_assists;nhl:player_shots_on_goal,player_points,player_total_saves;nfl:player_pass_yds,player_rush_yds,player_receptions,player_reception_yds,player_anytime_td,player_1st_td
+```
+
 Optional extras, only if you want to customize the list:
 
 ```
@@ -82,6 +90,10 @@ ODDS_REGION=us
 
 `ODDS_MARKETS=all` is the same as the built-in full list. Never put the
 API key in the repo or in this file.
+
+Boot and the daily 10:00 AM ET refresh build NFL on or before game days:
+if today has no NFL games (for example Saturday), the app looks up to
+three days ahead and generates Sunday's slate.
 
 Optional: also set `REFRESH_TOKEN` to a secret string. Then a rebuild is:
 

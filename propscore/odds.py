@@ -25,7 +25,7 @@ log = logging.getLogger("propscore")
 
 ET = ZoneInfo("America/New_York")
 API_HOST = "https://api.the-odds-api.com"
-SPORT_KEYS = {"nba": "basketball_nba", "nhl": "icehockey_nhl"}
+SPORT_KEYS = {"nba": "basketball_nba", "nhl": "icehockey_nhl", "nfl": "americanfootball_nfl"}
 REGION = "us"
 RESERVE_DEFAULT = 30
 DAILY_BUDGET_DEFAULT = 15  # credits; see prefetch docstring for the math
@@ -65,6 +65,22 @@ MARKETS_BY_SPORT: dict[str, list[tuple[str, str]]] = {
         ("player_points", "points"),
         ("player_total_saves", "saves"),
     ],
+    # Not fetched on the free 15-credit budget unless ODDS_MARKETS
+    # explicitly includes an nfl: section.
+    "nfl": [
+        ("player_pass_yds", "pass_yds"),
+        ("player_pass_tds", "pass_td"),
+        ("player_pass_completions", "completions"),
+        ("player_pass_attempts", "pass_att"),
+        ("player_pass_interceptions", "ints"),
+        ("player_rush_yds", "rush_yds"),
+        ("player_rush_attempts", "rush_att"),
+        ("player_receptions", "receptions"),
+        ("player_reception_yds", "rec_yds"),
+        ("player_rush_reception_yds", "rush_rec_yds"),
+        ("player_anytime_td", "anytime_td"),
+        ("player_1st_td", "first_td"),
+    ],
 }
 MARKET_PROP = {market: prop for pairs in MARKETS_BY_SPORT.values() for market, prop in pairs}
 
@@ -89,6 +105,19 @@ LINES_BY_SPORT: dict[str, dict[str, list[float]]] = {
         "shots": [1.5, 2.5, 3.5, 4.5],
         "saves": [20.5, 25.5, 30.5],
     },
+    "nfl": {
+        "pass_yds": [199.5, 249.5, 299.5],
+        "pass_td": [0.5, 1.5, 2.5],
+        "completions": [15.5, 19.5, 23.5],
+        "pass_att": [29.5, 34.5, 39.5],
+        "ints": [0.5, 1.5],
+        "rush_yds": [39.5, 59.5, 79.5],
+        "rush_att": [9.5, 14.5, 19.5],
+        "receptions": [2.5, 3.5, 4.5, 5.5],
+        "rec_yds": [29.5, 49.5, 69.5],
+        "rush_rec_yds": [49.5, 69.5, 89.5],
+        "anytime_td": [0.5],
+    },
 }
 
 STANDARD_LINES = LINES_BY_SPORT["nba"]
@@ -111,6 +140,18 @@ PROP_LABELS = {
     "hits": "HIT",
     "first_basket": "First FGM",
     "first_goal": "First Goal",
+    "pass_yds": "PASS YDS",
+    "pass_td": "PASS TD",
+    "completions": "CMP",
+    "pass_att": "PASS ATT",
+    "ints": "INT",
+    "rush_yds": "RUSH YDS",
+    "rush_att": "RUSH ATT",
+    "receptions": "REC",
+    "rec_yds": "REC YDS",
+    "rush_rec_yds": "RUSH+REC",
+    "anytime_td": "ANY TD",
+    "first_td": "First TD",
 }
 
 PROP_FULL_LABELS = {
@@ -129,6 +170,18 @@ PROP_FULL_LABELS = {
     "saves": "Saves",
     "first_basket": "First FGM",
     "first_goal": "First Goal",
+    "pass_yds": "Passing Yards",
+    "pass_td": "Passing Touchdowns",
+    "completions": "Completions",
+    "pass_att": "Pass Attempts",
+    "ints": "Interceptions",
+    "rush_yds": "Rushing Yards",
+    "rush_att": "Rush Attempts",
+    "receptions": "Receptions",
+    "rec_yds": "Receiving Yards",
+    "rush_rec_yds": "Rush + Rec Yards",
+    "anytime_td": "Anytime Touchdown",
+    "first_td": "First TD",
 }
 
 TEAM_ALIASES = {
@@ -241,7 +294,7 @@ def prop_full_label(prop: str) -> str:
 
 
 # Counting stats that we only post if the player actually produces them.
-_SPARSE_PROPS = {"steals", "blocks", "blocked", "hits"}
+_SPARSE_PROPS = {"steals", "blocks", "blocked", "hits", "ints"}
 
 
 def _median(values: list[float]) -> float:
@@ -273,7 +326,7 @@ def estimated_line(logs: list, prop: str, sport: str = "nba") -> float | None:
     (and similar sparse stats) are omitted unless that L10 median is
     at least 0.5. First FGM / first goal stay at 0.5.
     """
-    if prop in {"first_basket", "first_goal"}:
+    if prop in {"first_basket", "first_goal", "first_td", "anytime_td"}:
         return 0.5
     values: list[float] = []
     for game in logs or []:
@@ -285,7 +338,15 @@ def estimated_line(logs: list, prop: str, sport: str = "nba") -> float | None:
         return None
     recent = values[:10]
     med = _median(recent)
-    season_avg = sum(values) / len(values)
+    current_vals = []
+    for game in logs or []:
+        if getattr(game, "prior_season", False):
+            continue
+        try:
+            current_vals.append(float(game.value(prop)))
+        except (TypeError, ValueError, AttributeError):
+            continue
+    season_avg = (sum(current_vals) / len(current_vals)) if current_vals else (sum(values) / len(values))
     raw = 0.7 * med + 0.3 * season_avg
     if prop in _SPARSE_PROPS and med < 0.5:
         return None
@@ -537,6 +598,10 @@ def markets_for_sport(sport: str) -> list[tuple[str, str]]:
     sport = (sport or "").lower()
     default = list(MARKETS_BY_SPORT.get(sport) or [])
     raw = os.environ.get("ODDS_MARKETS", "").strip()
+    # NFL stays off the free daily budget unless the operator explicitly
+    # lists an nfl: section. ODDS_MARKETS=all still does not buy NFL.
+    if sport == "nfl" and (not raw or raw.lower() in {"default", "all"}):
+        return []
     if not raw or raw.lower() in {"default", "all"}:
         return default
     section = raw
@@ -554,7 +619,7 @@ def markets_for_sport(sport: str) -> list[tuple[str, str]]:
             else:
                 picked = part
         if picked is None:
-            return default
+            return [] if sport == "nfl" else default
         section = picked
     out: list[tuple[str, str]] = []
     for token in section.split(","):
