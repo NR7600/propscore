@@ -114,7 +114,7 @@ budget (default 15 credits) and a reserve (default 30) stop fetching
 when the month is tight. That is enough for about two NBA markets on a
 6-game night; it is **not** enough for every NBA and NHL market every
 day, so NBA is filled first. Props without a live line keep the
-standard thresholds below and are marked **standard**.
+estimated player lines below and are marked **est. line**.
 
 The app runs fine with no key. Never commit the key or put it in a file.
 

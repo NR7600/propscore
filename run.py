@@ -109,7 +109,7 @@ def main() -> int:
     from propscore.defense import fetch_defense_ranks
     from propscore.odds import prefetch_slate
 
-    print("Loading player-prop lines (Odds API if a key is set, else standard thresholds)...")
+    print("Loading player-prop lines (Odds API if a key is set, else estimated lines)...")
     odds_report = prefetch_slate(
         sport.key,
         date,

@@ -309,7 +309,7 @@
         </div>
         <span class="side ${sideCls}">${escapeHtml(sideTxt)}</span>
       </div>
-      <div class="market">${escapeHtml(row.line_label)}${row.book_title && row.line_source === "live" ? ` · ${escapeHtml(row.book_title)}` : ""}${row.line_source === "standard" ? `<span class="std-badge">standard</span>` : ""}</div>
+      <div class="market">${escapeHtml(row.line_label)}${row.book_title && row.line_source === "live" ? ` · ${escapeHtml(row.book_title)}` : ""}${row.line_source === "est" ? `<span class="est-badge">est. line</span>` : ""}</div>
       <div class="rates-grid">${windows}</div>
       ${streaks.length ? `<div class="streaks">${streaks.map(escapeHtml).join(" · ")}</div>` : ""}
       ${chips.length ? `<div class="chips">${chips.map((c) => `<span class="chip">${escapeHtml(c)}</span>`).join("")}</div>` : ""}
@@ -391,7 +391,7 @@
     const first = row.prop === "first_basket" || row.prop === "first_goal" || row.first_kind;
     const sub = first
       ? escapeHtml(row.prop_full || row.prop_label)
-      : `${escapeHtml(row.prop_full || row.prop_label)} vs ${escapeHtml(String(row.display_line))} line`;
+      : `${escapeHtml(row.prop_full || row.prop_label)} vs ${escapeHtml(String(row.display_line))} ${row.line_source === "est" ? "est. line" : "line"}`;
     $("player-header").innerHTML = `
       <div class="player-head">
         <h1>${escapeHtml(p.name || row.player)}</h1>
@@ -777,7 +777,7 @@
       if (propBtn) {
         const prop = propBtn.dataset.propkey;
         const best = playerAllRows().filter((r) => r.prop === prop)
-          .sort((a, b) => ((b.line_source === "live") - (a.line_source === "live")) || (b.score || 0) - (a.score || 0))[0];
+          .sort((a, b) => (b.score || 0) - (a.score || 0))[0];
         if (!best) return;
         state.selectedKey = `${best.prop}:${best.side}:${best.line}`;
         setHash(state.sport, state.player.player.id, { prop: best.prop, side: best.side, line: best.line });

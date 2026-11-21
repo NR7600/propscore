@@ -48,13 +48,14 @@ PREFERRED_BOOKS = (
 # NBA is always attempted before NHL when both sports run the same day
 # (see prefetch_slate callers). Within a sport, earlier markets win the
 # daily budget.
+# Priority order. On the free 15-credit cap a 6-game NBA slate usually
+# covers points + first_basket (12 credits) and stops. Raising
+# ODDS_DAILY_BUDGET is enough to walk further down the list.
 MARKETS_BY_SPORT: dict[str, list[tuple[str, str]]] = {
     "nba": [
-        # points + first_basket first so a 6-game slate uses 12 of the
-        # 15-credit daily cap. Rebounds are omitted from the paid fetch
-        # (they still appear as standard or from a leftover cache).
         ("player_points", "points"),
         ("player_first_basket", "first_basket"),
+        ("player_rebounds", "rebounds"),
         ("player_assists", "assists"),
         ("player_threes", "threes"),
         ("player_points_rebounds_assists", "pra"),
@@ -65,6 +66,7 @@ MARKETS_BY_SPORT: dict[str, list[tuple[str, str]]] = {
         ("player_total_saves", "saves"),
     ],
 }
+MARKET_PROP = {market: prop for pairs in MARKETS_BY_SPORT.values() for market, prop in pairs}
 
 # Over thresholds used when no live line exists for that player/stat.
 LINES_BY_SPORT: dict[str, dict[str, list[float]]] = {
@@ -162,7 +164,7 @@ class LineOffer:
     """A single over/under line for one player and stat."""
 
     line: float
-    source: str  # "live" or "standard"
+    source: str  # "live", "est", "research", or legacy "standard"
     over_price: int | None = None
     under_price: int | None = None
     book: str = ""
@@ -190,14 +192,15 @@ def lowest_line(prop: str, sport: str = "nba") -> float | None:
     return min(lines) if lines else None
 
 
-def display_line(line: float, source: str = "standard") -> float:
+def display_line(line: float, source: str = "est") -> float:
     """How the line should appear on a card.
 
-    Standard integer thresholds of 25 (hit if value >= 25) are the same
-    as Over 24.5. Live sportsbook points are shown as the book posted them.
+    Live and estimated lines are already sportsbook-style half-points
+    and are shown as stored. Legacy integer thresholds of 25 (hit if
+    value >= 25) display as Over 24.5.
     """
     value = float(line)
-    if source == "live":
+    if source in {"live", "est", "research"}:
         return value
     if value.is_integer():
         return value - 0.5
@@ -237,8 +240,68 @@ def prop_full_label(prop: str) -> str:
     return PROP_FULL_LABELS.get(prop, PROP_LABELS.get(prop, prop.upper()))
 
 
-def get_offers(player: dict, prop: str, sport: str = "nba") -> list[LineOffer]:
-    """Return live offers if we already prefetched them, else thresholds.
+# Counting stats that we only post if the player actually produces them.
+_SPARSE_PROPS = {"steals", "blocks", "blocked", "hits"}
+
+
+def _median(values: list[float]) -> float:
+    ordered = sorted(values)
+    n = len(ordered)
+    mid = n // 2
+    if n % 2:
+        return float(ordered[mid])
+    return (ordered[mid - 1] + ordered[mid]) / 2.0
+
+
+def round_book_line(value: float) -> float:
+    """Nearest 0.5, then prefer a no-push x.5 sportsbook line.
+
+    A whole-number estimate of 1, 2, 24, ... becomes 1.5, 2.5, 24.5 so
+    the over is not a near-automatic 0.5 / 1.0 gimme.
+    """
+    half = round(float(value) * 2) / 2.0
+    if abs(half - round(half)) < 1e-9:
+        return 0.5 if half < 1 else half + 0.5
+    return max(0.5, half)
+
+
+def estimated_line(logs: list, prop: str, sport: str = "nba") -> float | None:
+    """One player-specific line when no sportsbook number is cached.
+
+    70% the median of his last 10 played games plus 30% his season
+    average, rounded to a sportsbook-style half point. Steals/blocks
+    (and similar sparse stats) are omitted unless that L10 median is
+    at least 0.5. First FGM / first goal stay at 0.5.
+    """
+    if prop in {"first_basket", "first_goal"}:
+        return 0.5
+    values: list[float] = []
+    for game in logs or []:
+        try:
+            values.append(float(game.value(prop)))
+        except (TypeError, ValueError, AttributeError):
+            continue
+    if len(values) < 3:
+        return None
+    recent = values[:10]
+    med = _median(recent)
+    season_avg = sum(values) / len(values)
+    raw = 0.7 * med + 0.3 * season_avg
+    if prop in _SPARSE_PROPS and med < 0.5:
+        return None
+    line = round_book_line(raw)
+    if line < 0.5:
+        return None
+    return line
+
+
+def get_offers(
+    player: dict,
+    prop: str,
+    sport: str = "nba",
+    logs: list | None = None,
+) -> list[LineOffer]:
+    """Return a live sportsbook line if cached, else one estimated line.
 
     Never calls The Odds API. `prefetch_slate` must run first (or a
     same-day cache must already be on disk) for live lines to appear.
@@ -246,10 +309,10 @@ def get_offers(player: dict, prop: str, sport: str = "nba") -> list[LineOffer]:
     live = _lookup_live(player, prop, sport)
     if live:
         return [live]
-    return [
-        LineOffer(line=line, source="standard")
-        for line in lines_for_sport(sport).get(prop, [])
-    ]
+    est = estimated_line(logs or [], prop, sport)
+    if est is None:
+        return []
+    return [LineOffer(line=est, source="est")]
 
 
 def get_lines(player: dict, prop: str, sport: str = "nba") -> list[float]:
@@ -268,6 +331,7 @@ def odds_status() -> dict[str, Any]:
         "region": os.environ.get("ODDS_REGION", REGION),
         "reserve": _reserve(),
         "daily_budget": _daily_budget(),
+        "markets": [m for m, _p in markets_for_sport("nba") + markets_for_sport("nhl")],
         "requests_remaining": usage.get("requests_remaining"),
         "requests_used": usage.get("requests_used"),
         "spent_today": usage.get("spent_today"),
@@ -299,7 +363,7 @@ def prefetch_slate(
     So we cap spending at `ODDS_DAILY_BUDGET` (default 15) and stop
     when `x-requests-remaining` falls to `ODDS_RESERVE` (default 30).
     15 × 30 days = 450, plus a 30-credit reserve, fits in 500.
-    NBA markets are filled first; NHL only if budget remains.
+    Markets are purchased in priority order (NBA first, then NHL if credits remain). The default list is the full set; a 15-credit day typically covers NBA points + first_basket only. Raise ODDS_DAILY_BUDGET (and optionally set ODDS_MARKETS) after a plan upgrade to fill the rest. There is no cheaper official way to get player props: the bulk /odds endpoint does not include them, and extra regions multiply the cost.
 
     Results are cached to disk for the slate date so restarts and
     later `run.py` calls do not spend credits again.
@@ -324,12 +388,12 @@ def prefetch_slate(
         }
 
     if skip_fetch:
-        print("Odds fetch skipped (--skip-odds); using cache or standard thresholds.")
+        print("Odds fetch skipped (--skip-odds); using cache or estimated lines.")
         return {"ok": True, "cached": False, "skipped": "skip_fetch", "live_lines": 0}
 
     key = _api_key()
     if not key:
-        print("ODDS_API_KEY is not set; using standard thresholds.")
+        print("ODDS_API_KEY is not set; using estimated lines.")
         return {"ok": True, "cached": False, "skipped": "no_key", "live_lines": 0}
 
     usage = _read_usage()
@@ -361,7 +425,7 @@ def prefetch_slate(
     try:
         events = _list_events(sport, date, key)
     except Exception as exc:
-        print(f"Odds events list failed ({type(exc).__name__}); using standard lines.")
+        print(f"Odds events list failed ({type(exc).__name__}); using estimated lines.")
         return {"ok": False, "skipped": "events_error", "live_lines": 0}
 
     matched = _match_events(events, games)
@@ -370,7 +434,7 @@ def prefetch_slate(
         _store_cache(sport, date, payload, cache_path)
         return {"ok": True, "cached": False, "live_lines": 0, "credits_spent": 0}
 
-    markets = MARKETS_BY_SPORT.get(sport) or []
+    markets = markets_for_sport(sport)
     remaining_budget = budget - spent_today
     spent = 0
     for market_key, prop in markets:
@@ -460,6 +524,53 @@ def _daily_budget() -> int:
         return max(0, int(os.environ.get("ODDS_DAILY_BUDGET", DAILY_BUDGET_DEFAULT)))
     except ValueError:
         return DAILY_BUDGET_DEFAULT
+
+
+def markets_for_sport(sport: str) -> list[tuple[str, str]]:
+    """Markets to fetch, in priority order.
+
+    Override with ODDS_MARKETS, e.g.
+      nba:player_points,player_first_basket,player_rebounds;nhl:player_shots_on_goal
+    Use ODDS_MARKETS=all for the built-in full list (same as the default;
+    the daily budget is what limits how many are actually purchased).
+    """
+    sport = (sport or "").lower()
+    default = list(MARKETS_BY_SPORT.get(sport) or [])
+    raw = os.environ.get("ODDS_MARKETS", "").strip()
+    if not raw or raw.lower() in {"default", "all"}:
+        return default
+    section = raw
+    if ":" in raw or ";" in raw:
+        picked = None
+        for part in raw.split(";"):
+            part = part.strip()
+            if not part:
+                continue
+            if ":" in part:
+                key, _, rest = part.partition(":")
+                if key.strip().lower() == sport:
+                    picked = rest.strip()
+                    break
+            else:
+                picked = part
+        if picked is None:
+            return default
+        section = picked
+    out: list[tuple[str, str]] = []
+    for token in section.split(","):
+        market = token.strip()
+        if not market:
+            continue
+        prop = MARKET_PROP.get(market)
+        if not prop:
+            # allow "points" as well as "player_points"
+            for mk, pr in default:
+                if market in {mk, pr}:
+                    market, prop = mk, pr
+                    break
+        if prop:
+            out.append((market, prop))
+    return out or default
 
 
 def _usage_path() -> Path:

@@ -408,7 +408,7 @@ def _is_gimme(row: dict[str, Any], sport: str = "nba") -> bool:
     """True when L10 is 100% on the easiest threshold for that side."""
     prop = row.get("prop")
     line = row.get("line")
-    if row.get("line_source") == "live":
+    if row.get("line_source") in {"live", "est", "research"}:
         return False
     if (row.get("l10") or 0) < 0.999:
         return False

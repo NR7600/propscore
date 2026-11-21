@@ -25,7 +25,8 @@ rate when the player has fewer than 3 games at that venue. Players
 with fewer than MIN_GAMES played games, or a season minutes average
 below MIN_AVG_MINUTES, are skipped.
 
-Each standard threshold is ranked on both the Over and the Under.
+Each player gets one line per stat (a live sportsbook number, or an
+estimated line from his recent games) ranked on both the Over and the Under.
 An over hits when value >= line; an under hits when value < line.
 """
 
@@ -296,7 +297,7 @@ def rank_player_props(
         "team_abbr": player.team_abbr,
     }
     for prop in props:
-        for offer in get_offers(player_payload, prop, sport=sport):
+        for offer in get_offers(player_payload, prop, sport=sport, logs=played):
             line = offer.line
             shown = offer.display_line
             l5_avg = round(_avg(_window(played, 5), prop), 2)

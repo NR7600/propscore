@@ -36,13 +36,52 @@ rebuild while the app is asleep, upgrade or hit `POST /api/refresh`.
 Optional: in the Render service’s Environment tab, set `ODDS_API_KEY`
 to your Odds API key if you want live US sportsbook lines. Paste it only
 in Render’s env UI — do not put it in the repo. The app works without
-it (standard thresholds). Render’s free disk is wiped when the service
-sleeps, so boot-time board generation will **not** call the Odds API
-(that would re-spend the daily credit budget on every wake). Use
-**Manual Deploy** plus a later `POST /api/refresh` (or the 10:00 AM ET
-job if the service is awake) to pull lines, subject to the daily cap.
-Set `ODDS_FETCH_ON_BOOT=1` only if you accept spending up to 15 credits
-on each cold start.
+it: missing books fall back to a player-specific **estimated line**
+(70% L10 median + 30% season average, rounded to a half-point), labeled
+“est. line”. Render’s free disk is wiped when the service sleeps, so
+boot-time board generation will **not** call the Odds API (that would
+re-spend the daily credit budget on every wake). Use **Manual Deploy**
+plus a later `POST /api/refresh` (or the 10:00 AM ET job if the service
+is awake) to pull lines, subject to the daily cap. Set
+`ODDS_FETCH_ON_BOOT=1` only if you accept spending up to the daily
+budget on each cold start.
+
+### Odds API budget (free plan → paid)
+
+The official event-odds cost is `(unique markets returned) × (regions)`.
+Player props are not available on the cheaper bulk `/odds` endpoint, and
+adding regions (or `us_dfs`) multiplies the cost, so we request
+`region=us` only. There is no supported trick that yields more real
+player-prop lines per credit.
+
+On the free Starter plan (500 credits/month) the defaults are:
+
+- `ODDS_DAILY_BUDGET=15` (15 × 30 days = 450, plus a 30-credit reserve)
+- Market order: NBA `player_points`, `player_first_basket`, then
+  rebounds / assists / threes / PRA; NHL only if credits remain
+- A typical 6-game NBA night spends 12 credits on points + first
+  basket and stops. Other stats use estimated lines that day.
+
+**When you upgrade the Odds API plan**, you only need to raise the
+budget in Render’s Environment tab and redeploy or refresh:
+
+```
+ODDS_DAILY_BUDGET=80
+```
+
+That is enough to walk further down the market list (rebounds, assists,
+threes, PRA, then NHL). You do not have to change code.
+
+Optional extras, only if you want to customize the list:
+
+```
+ODDS_MARKETS=nba:player_points,player_first_basket,player_rebounds,player_assists,player_threes,player_points_rebounds_assists;nhl:player_shots_on_goal,player_points,player_total_saves
+ODDS_RESERVE=30
+ODDS_REGION=us
+```
+
+`ODDS_MARKETS=all` is the same as the built-in full list. Never put the
+API key in the repo or in this file.
 
 Optional: also set `REFRESH_TOKEN` to a secret string. Then a rebuild is:
 

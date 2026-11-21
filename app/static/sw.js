@@ -1,5 +1,5 @@
 /* Da Real Big Homie Props service worker: cache the app shell, always fetch API fresh. */
-const CACHE = "bhp-shell-v7";
+const CACHE = "bhp-shell-v8";
 const SHELL = [
   "/",
   "/styles.css",

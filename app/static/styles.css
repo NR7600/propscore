@@ -365,3 +365,17 @@ table.box tr.miss td:first-child { color: var(--miss); }
 .view-log { color: var(--accent); }
 #board-view.first-mode .filter-bar label.toggle:has(#view-value),
 #board-view.first-mode #gimme-wrap { display: none !important; }
+
+.est-badge, .std-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+  vertical-align: middle;
+}
