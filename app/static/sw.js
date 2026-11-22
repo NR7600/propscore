@@ -1,5 +1,5 @@
 /* Da Real Big Homie Props service worker: cache the app shell; SWR for APIs. */
-const CACHE = "bhp-shell-v12";
+const CACHE = "bhp-shell-v13";
 const API_CACHE = "bhp-api-v1";
 const SHELL = [
   "/",
@@ -10,6 +10,9 @@ const SHELL = [
   "/icons/icon-512.png",
   "/icons/apple-touch-icon.png",
   "/favicon.png",
+  "/fonts/sora-latin.woff2",
+  "/fonts/sora-latin-ext.woff2",
+  "/icons/icon-maskable-512.png",
 ];
 
 self.addEventListener("install", (event) => {
