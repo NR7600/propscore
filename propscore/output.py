@@ -6,7 +6,7 @@ import csv
 import json
 from pathlib import Path
 
-from .ranking import PropRow, WEIGHTS, MIN_AVG_MINUTES, MIN_GAMES, STREAK_CAP, VENUE_MIN_GAMES
+from .ranking import PropRow, WEIGHTS, MIN_AVG_MINUTES, MIN_GAMES, STREAK_CAP, VENUE_MIN_GAMES, ALL_WINDOWS
 from .sports.base import Game, GameLog, Player
 
 TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "templates" / "board.html"
@@ -35,6 +35,7 @@ def write_json(
     first_score_rows: list[dict] | None = None,
     first_score_meta: dict | None = None,
     first_score_flags: dict | None = None,
+    team_ranks: dict | None = None,
 ) -> None:
     payload = {
         "sport": sport,
@@ -44,18 +45,33 @@ def write_json(
         "sources": sources,
         "formula": {
             "description": (
-                "Trend score is a 0-100 blend of window hit rates and streaks: "
-                "L4 16%, L5 16%, L8 14%, L10 14%, L15 10%, L20 10%, "
-                f"game streak 10% (capped at {STREAK_CAP}), and the matching "
-                "home or away streak 10%. Live/standard odds are not in the score."
+                "Strong-trend score uses Slipscore's in-app windows "
+                "(best six of L4/L5/L6/L8/L9/L10/L12/L15/L20 by hit%). "
+                "Fully-perfect short-window cards rank by game streak. "
+                "Otherwise score = 8 × perfect full windows + window quality "
+                "+ game streak + 0.85 × tonight's venue streak, so a long "
+                "home/away streak can outrank a short 4/4 and 5/5. Trivial "
+                "Under 0.5 gimmes on rare events score 0. Odds are not in "
+                "the regular-stat score."
             ),
-            "weights": WEIGHTS,
+            "name": "strong-v1",
+            "perfect_windows": list(ALL_WINDOWS),
+            "card_windows": list(ALL_WINDOWS),
+            "weights": {
+                "n_perfect": 8,
+                "window_quality": 1,
+                "game_streak": 1,
+                "venue_streak": 0.85,
+                "all_perfect_short_bonus": 40,
+            },
+            "legacy_weights": WEIGHTS,
             "streak_cap": STREAK_CAP,
             "min_games": MIN_GAMES,
             "min_avg_minutes": MIN_AVG_MINUTES,
             "venue_min_games": VENUE_MIN_GAMES,
         },
         "notes": notes,
+        "team_ranks": team_ranks or {},
         "games": [g if isinstance(g, dict) else g.to_dict() for g in games],
         "players": {
             p.id: {
@@ -90,9 +106,12 @@ def write_csv(path: Path, rows: list[PropRow]) -> None:
         "line",
         "display_line",
         "line_label",
+        "l4",
         "l5",
+        "l6",
+        "l8",
+        "l9",
         "l10",
-        "l20",
         "season",
         "h2h",
         "venue_hit",

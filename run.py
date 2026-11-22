@@ -112,7 +112,7 @@ def main() -> int:
                 print(f"  {done}/{len(players)} logs")
 
     from propscore.context import attach_defense, attach_without_splits, games_with_context
-    from propscore.defense import fetch_defense_ranks
+    from propscore.defense import fetch_team_ranks
     from propscore.odds import prefetch_slate
 
     print("Loading player-prop lines (Odds API if a key is set, else estimated lines)...")
@@ -135,7 +135,8 @@ def main() -> int:
         qualification=qual,
         slate_date=date,
     )
-    defense = fetch_defense_ranks(sport.key, client)
+    team_ranks = fetch_team_ranks(sport.key, client)
+    defense = {abbr: info["defense"] for abbr, info in team_ranks.items() if info.get("defense")}
     attach_defense(rows, defense)
     attach_without_splits(rows, players, logs, slate_date=date)
     game_payloads = games_with_context(games, players)
@@ -176,8 +177,8 @@ def main() -> int:
             "Data from ESPN public JSON (NFL scoreboard, rosters, injuries, player gamelogs). "
             "Season year 2026 is the 2026 regular season. Only skill positions (QB, RB, FB, WR, TE) "
             "are ranked. Players need 3 games this season and a meaningful role "
-            "(pass attempts, carries, or targets). When this season has fewer than 20 games, "
-            "last season pads L15/L20 and is counted in those windows."
+            "(pass attempts, carries, or targets). Last season always pads L15/L20 and long streaks, "
+            "and a second prior year is added when history is still short."
         )
         notes.append(
             "NFL sportsbook markets are not purchased on the free 15-credit Odds API budget. "
@@ -284,6 +285,7 @@ def main() -> int:
         first_score_rows=first_score_rows,
         first_score_meta=first_score_meta,
         first_score_flags=first_score_flags,
+        team_ranks=team_ranks,
     )
     write_csv(stem.with_suffix(".csv"), rows)
     write_html(

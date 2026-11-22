@@ -33,8 +33,12 @@ STAT_INDEX = {
     "assists": 8,
     "blocks": 9,
     "steals": 10,
+    "turnovers": 12,
     "points": 13,
 }
+
+# ESPN season filter year is the year the season *ends*.
+PRIOR_SEASON_YEARS = (SEASON_YEAR - 1, SEASON_YEAR - 2)
 
 
 def _parse_iso(value: str) -> datetime | None:
@@ -123,6 +127,65 @@ def _id_from_injury_athlete(athlete: dict) -> str | None:
     return None
 
 
+
+def _events_from_gamelog(data: dict, season_year: int, prior: bool) -> list[GameLog]:
+    events_meta = data.get("events") or {}
+    rows: list[GameLog] = []
+    for season_type in data.get("seasonTypes") or []:
+        name = (season_type.get("displayName") or "").lower()
+        if "regular" not in name:
+            continue
+        for category in season_type.get("categories") or []:
+            if category.get("type") != "event":
+                continue
+            for ev in category.get("events") or []:
+                event_id = str(ev.get("eventId") or "")
+                stats = ev.get("stats") or []
+                meta = events_meta.get(event_id) or {}
+                minutes = _parse_minutes(stats[STAT_INDEX["minutes"]] if len(stats) > STAT_INDEX["minutes"] else None)
+                points = _parse_int(stats[STAT_INDEX["points"]] if len(stats) > STAT_INDEX["points"] else 0)
+                rebounds = _parse_int(stats[STAT_INDEX["rebounds"]] if len(stats) > STAT_INDEX["rebounds"] else 0)
+                assists = _parse_int(stats[STAT_INDEX["assists"]] if len(stats) > STAT_INDEX["assists"] else 0)
+                threes = _parse_made(
+                    stats[STAT_INDEX["threes_made_att"]]
+                    if len(stats) > STAT_INDEX["threes_made_att"]
+                    else 0
+                )
+                fgm = _parse_made(
+                    stats[STAT_INDEX["fg_made_att"]]
+                    if len(stats) > STAT_INDEX["fg_made_att"]
+                    else 0
+                )
+                steals = _parse_int(stats[STAT_INDEX["steals"]] if len(stats) > STAT_INDEX["steals"] else 0)
+                blocked = _parse_int(stats[STAT_INDEX["blocks"]] if len(stats) > STAT_INDEX["blocks"] else 0)
+                turnovers = _parse_int(stats[STAT_INDEX["turnovers"]] if len(stats) > STAT_INDEX["turnovers"] else 0)
+                at_vs = (meta.get("atVs") or "").strip()
+                is_home = at_vs.lower() in {"vs", "vs."}
+                opponent = (meta.get("opponent") or {}).get("abbreviation") or ""
+                rows.append(
+                    GameLog(
+                        event_id=event_id,
+                        date=_log_date(meta.get("gameDate") or ""),
+                        opponent_abbr=opponent,
+                        is_home=is_home,
+                        minutes=round(minutes, 1),
+                        points=points,
+                        rebounds=rebounds,
+                        assists=assists,
+                        threes=threes,
+                        pra=points + rebounds + assists,
+                        result=meta.get("gameResult"),
+                        steals=steals,
+                        blocked=blocked,
+                        fgm=fgm,
+                        turnovers=turnovers,
+                        prior_season=prior,
+                        season_year=season_year,
+                    )
+                )
+    return rows
+
+
 class NBA:
     key = "nba"
     display_name = "NBA"
@@ -137,6 +200,8 @@ class NBA:
         "reb_ast": "REB+AST",
         "steals": "STL",
         "blocks": "BLK",
+        "turnovers": "TO",
+        "stl_blk": "BLK+STL",
     }
 
     def __init__(self, client: HttpClient):
@@ -263,64 +328,23 @@ class NBA:
             p.injury_return = inj.return_date
 
     def fetch_game_logs(self, player_id: str) -> list[GameLog]:
-        url = GAMELOG_URL.format(player_id=player_id)
-        data = self.client.get_json(
-            url,
-            params={"season": SEASON_YEAR},
-            cache_key=f"nba_gamelog_{player_id}",
-        )
-        events_meta = data.get("events") or {}
-        rows: list[GameLog] = []
-        for season_type in data.get("seasonTypes") or []:
-            name = (season_type.get("displayName") or "").lower()
-            if "regular" not in name:
-                continue
-            for category in season_type.get("categories") or []:
-                if category.get("type") != "event":
-                    continue
-                for ev in category.get("events") or []:
-                    event_id = str(ev.get("eventId") or "")
-                    stats = ev.get("stats") or []
-                    meta = events_meta.get(event_id) or {}
-                    minutes = _parse_minutes(stats[STAT_INDEX["minutes"]] if len(stats) > STAT_INDEX["minutes"] else None)
-                    points = _parse_int(stats[STAT_INDEX["points"]] if len(stats) > STAT_INDEX["points"] else 0)
-                    rebounds = _parse_int(stats[STAT_INDEX["rebounds"]] if len(stats) > STAT_INDEX["rebounds"] else 0)
-                    assists = _parse_int(stats[STAT_INDEX["assists"]] if len(stats) > STAT_INDEX["assists"] else 0)
-                    threes = _parse_made(
-                        stats[STAT_INDEX["threes_made_att"]]
-                        if len(stats) > STAT_INDEX["threes_made_att"]
-                        else 0
-                    )
-                    fgm = _parse_made(
-                        stats[STAT_INDEX["fg_made_att"]]
-                        if len(stats) > STAT_INDEX["fg_made_att"]
-                        else 0
-                    )
-                    steals = _parse_int(stats[STAT_INDEX["steals"]] if len(stats) > STAT_INDEX["steals"] else 0)
-                    blocked = _parse_int(stats[STAT_INDEX["blocks"]] if len(stats) > STAT_INDEX["blocks"] else 0)
-                    at_vs = (meta.get("atVs") or "").strip()
-                    is_home = at_vs.lower() in {"vs", "vs."}
-                    opponent = (meta.get("opponent") or {}).get("abbreviation") or ""
-                    rows.append(
-                        GameLog(
-                            event_id=event_id,
-                            date=_log_date(meta.get("gameDate") or ""),
-                            opponent_abbr=opponent,
-                            is_home=is_home,
-                            minutes=round(minutes, 1),
-                            points=points,
-                            rebounds=rebounds,
-                            assists=assists,
-                            threes=threes,
-                            pra=points + rebounds + assists,
-                            result=meta.get("gameResult"),
-                            steals=steals,
-                            blocked=blocked,
-                            fgm=fgm,
-                        )
-                    )
-        # Unique by event, newest first.
+        rows = list(self._fetch_season_logs(player_id, SEASON_YEAR, prior=False))
+        current_n = sum(1 for g in rows if g.minutes and g.minutes > 0)
+        # Always attach two prior regular seasons so L15/L20 and long
+        # home/away streaks (e.g. a 53-game road run) can form.
+        for year in PRIOR_SEASON_YEARS:
+            if current_n >= 80 and any(g.season_year == year for g in rows):
+                break
+            rows.extend(self._fetch_season_logs(player_id, year, prior=True))
         uniq: dict[str, GameLog] = {}
         for row in rows:
             uniq[row.event_id or f"{row.date}-{row.opponent_abbr}"] = row
         return sorted(uniq.values(), key=lambda g: (g.date, g.event_id), reverse=True)
+
+    def _fetch_season_logs(self, player_id: str, season_year: int, prior: bool) -> list[GameLog]:
+        data = self.client.get_json(
+            GAMELOG_URL.format(player_id=player_id),
+            params={"season": season_year},
+            cache_key=f"nba_gamelog_{player_id}_{season_year}",
+        )
+        return _events_from_gamelog(data or {}, season_year, prior)

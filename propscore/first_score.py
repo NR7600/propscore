@@ -29,6 +29,8 @@ from .ranking import (
     _played,
     _rest,
     trend_score,
+    strong_trend_score,
+    select_display_windows,
 )
 from .sports.base import Game, GameLog, Player
 
@@ -797,8 +799,11 @@ def build_first_score_rows(
 
         l4, l4_h, l4_n = wr(window(4))
         l5, l5_h, l5_n = wr(window(5))
+        l6, l6_h, l6_n = wr(window(6))
         l8, l8_h, l8_n = wr(window(8))
+        l9, l9_h, l9_n = wr(window(9))
         l10, l10_h, l10_n = wr(window(10))
+        l12, l12_h, l12_n = wr(window(12))
         l15, l15_h, l15_n = wr(window(15))
         l20, l20_h, l20_n = wr(window(20))
         current_seq = [s for s in seq if not getattr(s["log"], "prior_season", False)]
@@ -849,7 +854,18 @@ def build_first_score_rows(
         tip_win_rate = _rate(tip_w, tip_n)
         rest_days, is_b2b = _rest(played, slate_date)
         venue_streak = home_streak if venue == "H" else away_streak
-        score = trend_score(l4, l5, l8, l10, l15, l20, streak, venue_streak)
+        windows = {
+            4: (l4_h, l4_n),
+            5: (l5_h, l5_n),
+            6: (l6_h, l6_n),
+            8: (l8_h, l8_n),
+            9: (l9_h, l9_n),
+            10: (l10_h, l10_n),
+            12: (l12_h, l12_n),
+            15: (l15_h, l15_n),
+            20: (l20_h, l20_n),
+        }
+        display = select_display_windows(windows)
         offer = None
         offers = get_offers(
             {"name": player.name, "event_id": game.event_id, "team_abbr": player.team_abbr},
@@ -860,6 +876,15 @@ def build_first_score_rows(
             if cand.source == "live":
                 offer = cand
                 break
+        score, n_perfect, longest_perfect, best_streak, trivial = strong_trend_score(
+            windows,
+            streak,
+            venue_streak,
+            prop=meta_s["prop"],
+            line=0.5,
+            side="over",
+            line_source=(offer.source if offer else "research"),
+        )
         price = offer.price_for("over") if offer else None
         shown_label = line_label(
             meta_s["prop"],
@@ -892,15 +917,24 @@ def build_first_score_rows(
                 "book": (offer.book if offer else ""),
                 "book_title": (offer.book_title if offer else ""),
                 "l4": l4,
+                "l6": l6,
                 "l5": l5,
                 "l8": l8,
+                "l9": l9,
                 "l10": l10,
+                "l12": l12,
                 "l15": l15,
                 "l20": l20,
                 "l4_hits": l4_h,
                 "l4_games": l4_n,
+                "l6_hits": l6_h,
+                "l6_games": l6_n,
                 "l8_hits": l8_h,
                 "l8_games": l8_n,
+                "l9_hits": l9_h,
+                "l9_games": l9_n,
+                "l12_hits": l12_h,
+                "l12_games": l12_n,
                 "l15_hits": l15_h,
                 "l15_games": l15_n,
                 "season": season,
@@ -958,9 +992,14 @@ def build_first_score_rows(
                 "started_last": started_last,
                 "first_kind": meta_s["kind"],
                 "prior_games": prior_n,
+                "n_perfect": n_perfect,
+                "longest_perfect": longest_perfect,
+                "best_streak": best_streak,
+                "trivial_gimme": trivial,
+                "windows": display,
             }
         )
 
-    rows.sort(key=lambda r: (-(r.get("score") or 0), -(r.get("l10") or 0), -(r.get("season") or 0), r.get("player") or ""))
+    rows.sort(key=lambda r: (-(r.get("score") or 0), -(r.get("best_streak") or 0), -(r.get("l10") or 0), r.get("player") or ""))
     meta["rows"] = len(rows)
     return rows, meta, log_flags

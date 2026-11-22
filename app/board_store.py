@@ -8,7 +8,8 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from propscore.odds import lines_for_sport, lowest_line, props_for_sport
+from propscore.odds import lines_for_sport, lowest_line, props_for_sport, format_american, prop_full_label
+from propscore.ranking import has_perfect_window, windows_from_row, select_display_windows
 
 ET = ZoneInfo("America/New_York")
 ROOT = Path(__file__).resolve().parent.parent
@@ -37,22 +38,32 @@ CARD_FIELDS = (
     "book_title",
     "l4",
     "l5",
+    "l6",
     "l8",
+    "l9",
     "l10",
-    "l15",
-    "l20",
     "l4_hits",
     "l4_games",
-    "l8_hits",
-    "l8_games",
-    "l15_hits",
-    "l15_games",
     "l5_hits",
     "l5_games",
+    "l6_hits",
+    "l6_games",
+    "l8_hits",
+    "l8_games",
+    "l9_hits",
+    "l9_games",
     "l10_hits",
     "l10_games",
+    "l12",
+    "l12_hits",
+    "l12_games",
+    "l15",
+    "l15_hits",
+    "l15_games",
+    "l20",
     "l20_hits",
     "l20_games",
+    "windows",
     "season",
     "season_hits",
     "season_games",
@@ -63,6 +74,9 @@ CARD_FIELDS = (
     "home_streak",
     "away_streak",
     "score",
+    "n_perfect",
+    "longest_perfect",
+    "best_streak",
     "games_played",
     "rest_days",
     "is_b2b",
@@ -151,6 +165,9 @@ LOG_FIELDS = (
     "rec_td",
     "targets",
     "anytime_td",
+    "turnovers",
+    "long_rush",
+    "long_rec",
     "first_score",
     "prior_season",
     "result",
@@ -271,23 +288,20 @@ class BoardStore:
             perfect=perfect,
             sort=sort,
             min_odds=None if first_mode else min_odds,
+            first_mode=first_mode,
         )
         top = _top10(rows, first_mode=first_mode)
-        top_ids = {_row_id(r) for r in top}
-        more = [r for r in rows if _row_id(r) not in top_ids]
-        page = max(1, page)
-        page_size = min(max(1, page_size), 50)
-        total = len(more)
-        total_pages = max(1, (total + page_size - 1) // page_size) if total else 1
-        if page > total_pages:
-            page = total_pages
-        start = (page - 1) * page_size
-        slice_ = [_compact_row(r) for r in more[start : start + page_size]]
         top_out = []
         for i, r in enumerate(top):
             item = _compact_row(r)
             item["rank"] = i + 1
             top_out.append(item)
+        # Hard cap: every board list is ranks 1-10 only. No "more trends".
+        total = len(top_out)
+        page = 1
+        page_size = 10
+        total_pages = 1
+        slice_: list[dict] = []
         return {
             "sport": data.get("sport", sport),
             "date": data.get("date", date),
@@ -318,7 +332,7 @@ class BoardStore:
             "page_size": page_size,
             "total": total,
             "total_pages": total_pages,
-            "has_more": page < total_pages,
+            "has_more": False,
             "props": props_for_sport(sport),
             "top": top_out,
             "top_count": len(top_out),
@@ -326,7 +340,7 @@ class BoardStore:
             "first_score_meta": data.get("first_score_meta") or {},
             "first_mode": first_mode,
             "games_remaining": _games_remaining(data.get("games") or []),
-            "slate_message": _slate_message(data.get("games") or [], first_mode, len(top_out) + total, sport=sport),
+            "slate_message": _slate_message(data.get("games") or [], first_mode, len(top_out), sport=sport),
         }
 
     def player(self, sport: str, date: str, player_id: str) -> dict[str, Any] | None:
@@ -376,7 +390,7 @@ class BoardStore:
         if not player:
             return None
         slim = []
-        for g in (player.get("logs") or [])[:20]:
+        for g in (player.get("logs") or [])[:30]:
             if not isinstance(g, dict):
                 g = g.to_dict() if hasattr(g, "to_dict") else dict(g)
             slim.append(_slim_log(g))
@@ -415,7 +429,105 @@ class BoardStore:
         payload = _slim_game(game)
         payload["injuries"] = injuries
         payload["news"] = news
+        payload["injuries_updated_at"] = data.get("generated_at")
+        payload["matchup"] = _matchup_payload(data, game)
         return payload
+
+    def prop_report(self, sport: str, date: str, player_id: str, prop: str, side: str, line: float | None) -> dict[str, Any] | None:
+        data = self.get(sport, date)
+        pool = list(data.get("rows") or [])
+        if prop in {"first_basket", "first_goal", "first_td"}:
+            pool = list(data.get("first_score_rows") or [])
+        matches = [
+            r for r in pool
+            if str(r.get("player_id")) == str(player_id) and str(r.get("prop") or "") == str(prop)
+            and str(r.get("side") or "over") == str(side or "over")
+        ]
+        if line is not None:
+            exact = [r for r in matches if abs(float(r.get("line") or 0) - float(line)) < 1e-9]
+            if exact:
+                matches = exact
+        if not matches:
+            return None
+        row = max(matches, key=lambda r: r.get("score") or 0)
+        windows = _row_windows(row)
+        name = row.get("player") or ""
+        shown = row.get("display_line") if row.get("display_line") is not None else row.get("line")
+        full = row.get("prop_full") or prop_full_label(str(prop))
+        side_word = "under" if (row.get("side") or "over") == "under" else "over"
+        possess = _his_or_her(name)
+        trend_lines: list[str] = []
+        for w in windows:
+            hits = int(w.get("hits") or 0)
+            games = int(w.get("games") or 0)
+            rate = (hits / games) if games else 0
+            trend_lines.append(
+                f"{name} has gone {side_word} {shown} {full} in {hits} of {possess} last {games} games ({_pct(rate)}%)."
+            )
+        if row.get("streak"):
+            trend_lines.append(
+                f"{name} is on a {int(row['streak'])}-game {side_word} streak for {shown} {full}."
+            )
+        venue = (row.get("venue") or "H").upper()
+        venue_streak = int(row.get("home_streak") or 0) if venue == "H" else int(row.get("away_streak") or 0)
+        if venue_streak:
+            loc = "home" if venue == "H" else "away"
+            trend_lines.append(
+                f"{name} is on a {venue_streak}-game {loc} {side_word} streak for {shown} {full}."
+            )
+        same = [
+            r for r in pool
+            if str(r.get("prop") or "") == str(prop) and str(r.get("side") or "over") == str(row.get("side") or "over")
+        ]
+        same = _one_per_player(same)
+        game_pool = [r for r in same if str(r.get("event_id")) == str(row.get("event_id"))]
+        data_game = _rank_in_pool(row, game_pool, odds=False)
+        odds_game = _rank_in_pool(row, game_pool, odds=True)
+        data_league = _rank_in_pool(row, same, odds=False)
+        odds_league = _rank_in_pool(row, same, odds=True)
+        live = row.get("line_source") == "live" and row.get("american_odds") is not None
+        venue_word = "at" if venue == "A" else "vs"
+        header_line = f"{row.get('line_label') or ''} · {venue_word} {row.get('opponent') or ''}".strip(" ·")
+        return {
+            "title": "PROP REPORT",
+            "player": name,
+            "team": row.get("team"),
+            "header": header_line,
+            "prop": prop,
+            "prop_label": row.get("prop_label"),
+            "prop_full": full,
+            "side": row.get("side"),
+            "line": row.get("line"),
+            "display_line": shown,
+            "line_label": row.get("line_label"),
+            "american_odds": row.get("american_odds") if live else None,
+            "american_odds_label": format_american(row.get("american_odds")) if live else "",
+            "line_source": row.get("line_source"),
+            "game": row.get("game"),
+            "trend_count": len(trend_lines),
+            "trend_lines": trend_lines,
+            "game_ranks": {
+                "data": None if not data_game else {"label": data_game[0], "place": data_game[1], "total": data_game[2]},
+                "odds": None if not (live and odds_game) else {"label": odds_game[0], "place": odds_game[1], "total": odds_game[2]},
+            },
+            "league_ranks": {
+                "data": None if not data_league else {"label": data_league[0], "place": data_league[1], "total": data_league[2]},
+                "odds": None if not (live and odds_league) else {"label": odds_league[0], "place": odds_league[1], "total": odds_league[2]},
+            },
+            "blurbs": {
+                "data": (
+                    "Data Rank is this prop's place among the same stat and side "
+                    "in tonight's game, or across the whole slate, ranked by trend "
+                    "strength — recent window hit rates plus current streaks."
+                ),
+                "odds": (
+                    "Odds Rank is this prop's place among those same props that "
+                    "have a live sportsbook price. Longer American odds rank higher. "
+                    "It is only shown when a real line exists."
+                ),
+            },
+        }
+
 
 
 def _view_label(view: str, min_l10: float) -> str:
@@ -424,10 +536,10 @@ def _view_label(view: str, min_l10: float) -> str:
             pct = int(round(min_l10 * 100))
             return (
                 f"Best value: for each player and stat, the highest line still "
-                f"clearing {pct}% of his last 10 games, ranked by trend strength."
+                f"clearing {pct}% of his last 10 games, ranked by strong trends (perfect windows and current streaks)."
             )
-        return "Best value: one line per player and stat, ranked by trend strength."
-    return "All qualifying lines, ranked by trend strength."
+        return "Best value: one line per player and stat, ranked by strong trends (perfect windows and current streaks)."
+    return "All qualifying lines, ranked by strong trends (perfect windows and current streaks)."
 
 
 def _is_out(status: str | None) -> bool:
@@ -454,12 +566,16 @@ def _filter_rows(
     perfect: bool = False,
     sort: str = "score",
     min_odds: int | None = None,
+    first_mode: bool = False,
 ) -> list[dict[str, Any]]:
     needle = (q or "").strip().lower()
     stat = (stat or "").strip().lower()
     game = (game or "").strip()
     out: list[dict[str, Any]] = []
+    excluded = set() if (stat or first_mode) else _all_stats_exclude(sport)
     for r in rows:
+        if excluded and str(r.get("prop") or "") in excluded:
+            continue
         if stat and str(r.get("prop", "")).lower() != stat:
             continue
         if game and str(r.get("event_id")) != game:
@@ -472,7 +588,7 @@ def _filter_rows(
             continue
         if side and str(r.get("side") or "over") != side:
             continue
-        if perfect and (r.get("l10") or 0) < 0.999:
+        if perfect and not _row_has_perfect(r):
             continue
         if min_odds is not None and r.get("line_source") == "live":
             price = r.get("american_odds")
@@ -493,9 +609,9 @@ def _filter_rows(
     if sort == "streak":
         out.sort(
             key=lambda r: (
-                -(r.get("streak") or 0),
-                -(r.get("l10") or 0),
+                -_longest_streak(r),
                 -(r.get("score") or 0),
+                -(r.get("l10") or 0),
                 r.get("player") or "",
             )
         )
@@ -623,9 +739,19 @@ def _row_id(row: dict[str, Any]) -> tuple:
 
 
 def _trend_key(row: dict[str, Any], first_mode: bool = False) -> tuple:
-    # Pure trend strength. Odds / live-vs-standard are never a sort key.
+    # First-score lists with a live price are odds-driven: longer
+    # American odds rank higher. Regular-stat lists stay on score.
+    if first_mode and row.get("line_source") == "live" and row.get("american_odds") is not None:
+        return (
+            1,
+            int(row.get("american_odds") or 0),
+            float(row.get("score") or 0),
+            int(row.get("streak") or 0),
+        )
     return (
+        0 if first_mode else 1,
         float(row.get("score") or 0),
+        int(row.get("best_streak") or _longest_streak(row)),
         float(row.get("l10") or 0),
         int(row.get("streak") or 0),
         float(row.get("l5") or 0),
@@ -635,16 +761,18 @@ def _trend_key(row: dict[str, Any], first_mode: bool = False) -> tuple:
 
 
 def _top10(rows: list[dict[str, Any]], first_mode: bool = False) -> list[dict[str, Any]]:
-    """One strongest trend per player, live lines preferred, capped at 10."""
-    best: dict[str, dict[str, Any]] = {}
-    for r in rows:
-        pid = str(r.get("player_id") or "")
-        if not pid:
-            continue
-        prev = best.get(pid)
-        if prev is None or _trend_key(r, first_mode) > _trend_key(prev, first_mode):
-            best[pid] = r
-    ranked = sorted(best.values(), key=lambda r: _trend_key(r, first_mode), reverse=True)
+    """Hard cap at 10 cards. The same player may appear more than once.
+
+    When a slate has live sportsbook lines, the regular-stat top 10 is
+    drawn from those live rows so estimated gimme unders cannot occupy
+    every rank. First-score lists already sort on odds when a price exists.
+    """
+    pool = rows
+    if not first_mode and any(r.get("line_source") == "live" for r in rows):
+        live = [r for r in rows if r.get("line_source") == "live"]
+        if live:
+            pool = live
+    ranked = sorted(pool, key=lambda r: _trend_key(r, first_mode), reverse=True)
     return ranked[:10]
 
 
@@ -686,8 +814,9 @@ def _games_remaining(games: list[dict[str, Any]]) -> int:
 
 def _first_view_label(sport: str) -> str:
     base = (
-        "Ranked 1-10 by trend strength: L4/L5/L8/L10/L15/L20 hit rates "
-        "plus game and home/away streaks. "
+        "Ranked 1-10 by strong trends: longest perfect windows "
+        "(4/4, 5/5, 8/8, 10/10, 15/15, 20/20), current game or home/away "
+        "streak, then L20/L10 hit rate. Weak and mixed rates fall out of the top 10. "
     )
     if sport == "nfl":
         return base + "First TD is the first touchdown of the game (field goals and safeties do not count)."
@@ -712,6 +841,117 @@ def _slate_message(games: list[dict[str, Any]], first_mode: bool, row_count: int
     if games:
         return "No games left on this slate. Check back tomorrow for the next one."
     return "No games on this slate."
+
+
+def _all_stats_exclude(sport: str) -> set[str]:
+    if sport == "nhl":
+        return {"first_goal", "goals"}
+    if sport == "nfl":
+        return {"first_td", "anytime_td"}
+    return {"first_basket"}
+
+
+def _row_windows(row: dict[str, Any]) -> list[dict]:
+    stored = row.get("windows")
+    if isinstance(stored, list) and stored:
+        return stored
+    return select_display_windows(windows_from_row(row))
+
+
+def _row_has_perfect(row: dict[str, Any]) -> bool:
+    stored = row.get("windows")
+    if isinstance(stored, list) and stored:
+        return has_perfect_window(stored)
+    return has_perfect_window(windows_from_row(row))
+
+
+def _longest_streak(row: dict[str, Any]) -> int:
+    return max(
+        int(row.get("streak") or 0),
+        int(row.get("home_streak") or 0),
+        int(row.get("away_streak") or 0),
+        int(row.get("best_streak") or 0),
+    )
+
+
+def _matchup_payload(data: dict[str, Any], game: dict[str, Any]) -> dict[str, Any]:
+    ranks = data.get("team_ranks") or {}
+    home = (game.get("home_abbr") or "").upper()
+    away = (game.get("away_abbr") or "").upper()
+    teams = 0
+    for info in ranks.values():
+        if isinstance(info, dict) and info.get("teams"):
+            teams = int(info["teams"])
+            break
+    def pack(abbr: str) -> dict[str, Any]:
+        info = ranks.get(abbr) or {}
+        return {
+            "abbr": abbr,
+            "name": info.get("name") or abbr,
+            "defense": info.get("defense") or {},
+            "offense": info.get("offense") or {},
+        }
+    return {
+        "teams": teams,
+        "legend": f"Ranked out of {teams or 30} teams · Red = tough, Green = smash",
+        "home": pack(home),
+        "away": pack(away),
+        "shooting": None,
+    }
+
+
+def _pct(rate: float) -> int:
+    return int(round((rate or 0) * 100))
+
+
+def _his_or_her(name: str) -> str:
+    return "his"
+
+
+def _rank_label(place: int, tied: bool, total: int) -> str:
+    prefix = "T-" if tied else ""
+    return f"{prefix}{place} of {total}"
+
+
+def _rank_in_pool(row: dict[str, Any], pool: list[dict[str, Any]], *, odds: bool) -> tuple[str, int, int] | None:
+    if not pool:
+        return None
+    pid = str(row.get("player_id"))
+    if odds:
+        eligible = [r for r in pool if r.get("line_source") == "live" and r.get("american_odds") is not None]
+        if row.get("line_source") != "live" or row.get("american_odds") is None:
+            return None
+        eligible.sort(key=lambda r: (-int(r.get("american_odds") or 0), r.get("player") or ""))
+        key_fn = lambda r: int(r.get("american_odds") or 0)
+    else:
+        eligible = list(pool)
+        eligible.sort(key=lambda r: (-(r.get("score") or 0), -(r.get("best_streak") or 0), r.get("player") or ""))
+        key_fn = lambda r: float(r.get("score") or 0)
+    total = len(eligible)
+    scores = [key_fn(r) for r in eligible]
+    place = None
+    my = key_fn(row)
+    for i, r in enumerate(eligible, start=1):
+        if str(r.get("player_id")) == pid:
+            place = i
+            # walk back for ties
+            while place > 1 and scores[place - 2] == my:
+                place -= 1
+            break
+    if place is None:
+        return None
+    tied = scores.count(my) > 1
+    return _rank_label(place, tied, total), place, total
+
+
+def _one_per_player(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    best: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        pid = str(r.get("player_id") or "")
+        prev = best.get(pid)
+        if prev is None or (r.get("score") or 0) > (prev.get("score") or 0):
+            best[pid] = r
+    return list(best.values())
 
 
 

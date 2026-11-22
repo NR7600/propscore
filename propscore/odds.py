@@ -97,6 +97,8 @@ LINES_BY_SPORT: dict[str, dict[str, list[float]]] = {
         "reb_ast": [6, 8, 10, 12],
         "steals": [0.5, 1.5, 2.5],
         "blocks": [0.5, 1.5, 2.5],
+        "turnovers": [1.5, 2.5, 3.5],
+        "stl_blk": [1.5, 2.5, 3.5],
     },
     "nhl": {
         "goals": [0.5, 1.5],
@@ -117,7 +119,23 @@ LINES_BY_SPORT: dict[str, dict[str, list[float]]] = {
         "rec_yds": [29.5, 49.5, 69.5],
         "rush_rec_yds": [49.5, 69.5, 89.5],
         "anytime_td": [0.5],
+        "long_rush": [8.5, 11.5, 14.5],
+        "long_rec": [10.5, 14.5, 19.5],
     },
+}
+
+# Chip order on the board. First-score chips are added by the UI, not here.
+CHIP_ORDER = {
+    "nba": [
+        "points", "rebounds", "assists", "pra", "pts_reb", "pts_ast", "reb_ast",
+        "threes", "steals", "blocks", "turnovers", "stl_blk",
+    ],
+    "nhl": ["points", "assists", "goals", "shots", "saves"],
+    "nfl": [
+        "anytime_td", "rush_rec_yds", "pass_yds", "pass_td", "pass_att",
+        "completions", "ints", "rush_yds", "rush_att", "long_rush",
+        "rec_yds", "receptions", "long_rec",
+    ],
 }
 
 STANDARD_LINES = LINES_BY_SPORT["nba"]
@@ -133,6 +151,8 @@ PROP_LABELS = {
     "reb_ast": "REB+AST",
     "steals": "STL",
     "blocks": "BLK",
+    "turnovers": "TO",
+    "stl_blk": "BLK+STL",
     "goals": "G",
     "shots": "SOG",
     "saves": "SV",
@@ -149,8 +169,10 @@ PROP_LABELS = {
     "rush_att": "RUSH ATT",
     "receptions": "REC",
     "rec_yds": "REC YDS",
-    "rush_rec_yds": "RUSH+REC",
-    "anytime_td": "ANY TD",
+    "rush_rec_yds": "RUSH+REC YDS",
+    "anytime_td": "RUSH+REC TD",
+    "long_rush": "LONG RUSH",
+    "long_rec": "LONG REC",
     "first_td": "First TD",
 }
 
@@ -165,6 +187,8 @@ PROP_FULL_LABELS = {
     "reb_ast": "Rebounds Assists",
     "steals": "Steals",
     "blocks": "Blocks",
+    "turnovers": "Turnovers",
+    "stl_blk": "Blocks + Steals",
     "goals": "Goals",
     "shots": "Shots on Goal",
     "saves": "Saves",
@@ -180,7 +204,9 @@ PROP_FULL_LABELS = {
     "receptions": "Receptions",
     "rec_yds": "Receiving Yards",
     "rush_rec_yds": "Rush + Rec Yards",
-    "anytime_td": "Anytime Touchdown",
+    "anytime_td": "Rush + Rec Touchdowns",
+    "long_rush": "Longest Rush",
+    "long_rec": "Longest Reception",
     "first_td": "First TD",
 }
 
@@ -237,7 +263,11 @@ def lines_for_sport(sport: str) -> dict[str, list[float]]:
 
 def props_for_sport(sport: str) -> list[dict[str, str]]:
     table = lines_for_sport(sport)
-    return [{"key": key, "label": PROP_LABELS.get(key, key.upper())} for key in table]
+    keys = [k for k in CHIP_ORDER.get(sport, []) if k in table]
+    for key in table:
+        if key not in keys:
+            keys.append(key)
+    return [{"key": key, "label": PROP_LABELS.get(key, key.upper())} for key in keys]
 
 
 def lowest_line(prop: str, sport: str = "nba") -> float | None:

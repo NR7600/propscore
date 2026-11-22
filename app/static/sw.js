@@ -1,5 +1,5 @@
 /* Da Real Big Homie Props service worker: cache the app shell; SWR for APIs. */
-const CACHE = "bhp-shell-v10";
+const CACHE = "bhp-shell-v12";
 const API_CACHE = "bhp-api-v1";
 const SHELL = [
   "/",

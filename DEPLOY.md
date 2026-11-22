@@ -8,7 +8,7 @@ for the free compute plan.
 Render’s free web services spin down after 15 minutes idle and take
 about a minute to wake. Local files are lost on restart, so the app
 regenerates today’s board on boot if it is missing, and also runs a
-10:00 AM America/New_York refresh while the service is awake. Free
+5:00 AM America/New_York refresh while the service is awake. Free
 cron jobs are not included; if you later want a guaranteed daily
 rebuild while the app is asleep, upgrade or hit `POST /api/refresh`.
 
@@ -41,7 +41,7 @@ it: missing books fall back to a player-specific **estimated line**
 “est. line”. Render’s free disk is wiped when the service sleeps, so
 boot-time board generation will **not** call the Odds API (that would
 re-spend the daily credit budget on every wake). Use **Manual Deploy**
-plus a later `POST /api/refresh` (or the 10:00 AM ET job if the service
+plus a later `POST /api/refresh` (or the 5:00 AM ET job if the service
 is awake) to pull lines, subject to the daily cap. Set
 `ODDS_FETCH_ON_BOOT=1` only if you accept spending up to the daily
 budget on each cold start.
@@ -91,7 +91,7 @@ ODDS_REGION=us
 `ODDS_MARKETS=all` is the same as the built-in full list. Never put the
 API key in the repo or in this file.
 
-Boot and the daily 10:00 AM ET refresh build NFL on or before game days:
+Boot and the daily 5:00 AM ET refresh build NFL on or before game days:
 if today has no NFL games (for example Saturday), the app looks up to
 three days ahead and generates Sunday's slate.
 

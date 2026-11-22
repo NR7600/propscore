@@ -26,8 +26,7 @@ python3 -m venv .venv
 .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-Then open [http://127.0.0.1:8000](http://127.0.0.1:8000). The JSON API is
-paginated so a phone never downloads the full 3 MB board file.
+Then open [http://127.0.0.1:8000](http://127.0.0.1:8000). Each board list is a hard top 10 (no “show more”), and API payloads are slimmed and gzipped for phones.
 
 Restart the same way if the server is stopped:
 
@@ -36,7 +35,7 @@ cd /workspace/propscore
 .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-The process also rebuilds the NBA board every day at 10:00 AM America/New_York
+The process also rebuilds the NBA board every day at 5:00 AM America/New_York
 (while it is running) and on `POST /api/refresh`. To regenerate by hand:
 
 ```bash

@@ -375,3 +375,91 @@ table.box tr.miss td:first-child { color: var(--miss); }
   opacity: 0.72;
   transition: opacity 0.15s ease;
 }
+
+.badge-out {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid #c44;
+  color: #ff8a8a;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  vertical-align: middle;
+}
+.gen-report {
+  background: none;
+  border: 0;
+  color: var(--accent);
+  font-weight: 800;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  padding: 4px;
+  text-transform: uppercase;
+}
+.streaks.none { color: var(--muted); font-weight: 600; }
+.card-foot { flex-wrap: wrap; }
+
+.modal-root {
+  position: fixed; inset: 0; z-index: 80;
+  display: flex; align-items: flex-end; justify-content: center;
+}
+.modal-root[hidden] { display: none; }
+.modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.62); }
+.modal {
+  position: relative;
+  width: 100%; max-width: 560px; max-height: min(92vh, 900px);
+  overflow: auto;
+  background: var(--bg, #07080c);
+  border: 1px solid var(--line);
+  border-radius: 18px 18px 0 0;
+  padding: 16px 14px 28px;
+  z-index: 1;
+}
+.modal-close {
+  position: absolute; top: 8px; right: 10px;
+  background: none; border: 0; color: var(--muted);
+  font-size: 26px; line-height: 1; cursor: pointer;
+}
+.report-title {
+  font-size: 12px; letter-spacing: 0.16em; font-weight: 800;
+  color: var(--muted); margin: 4px 28px 6px 0;
+}
+.report-player { font-size: 20px; font-weight: 800; margin: 0; }
+.report-meta { color: var(--muted); margin: 2px 0 4px; font-size: 13px; }
+.report-market { color: var(--accent); font-weight: 700; margin: 0 0 14px; }
+.report-section { margin: 14px 0; }
+.report-section h3 {
+  font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--muted); margin: 0 0 8px;
+}
+.trend-line { font-size: 13px; margin: 0 0 8px; line-height: 1.35; }
+.rank-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.rank-box {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 12px; padding: 10px;
+}
+.rank-box .k { font-size: 11px; color: var(--muted); font-weight: 700; }
+.rank-box .v { font-size: 18px; font-weight: 800; margin-top: 2px; }
+.blurb { font-size: 12px; color: var(--muted); line-height: 1.4; margin: 8px 0 0; }
+
+.matchup-legend { font-size: 12px; color: var(--muted); margin: 0 0 10px; }
+.matchup-team {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 12px; padding: 10px 12px; margin: 0 0 10px;
+}
+.matchup-team h4 { margin: 0 0 8px; font-size: 14px; }
+.match-row { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; margin: 4px 0; }
+.match-row .smash { color: var(--hit); font-weight: 700; }
+.match-row .tough { color: var(--miss); font-weight: 700; }
+.match-row .neutral { color: var(--muted); }
+
+.inj-stamp { font-size: 11px; color: var(--muted); margin: 8px 0 0; }
+.inj-teams { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+.inj-teams .pill { cursor: pointer; }
+
+.log-head { margin: 0 28px 8px 0; }
+.log-head h2 { margin: 0; font-size: 18px; }
+.log-head p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }

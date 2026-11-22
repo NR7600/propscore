@@ -33,8 +33,8 @@
 
     <section id="board-view">
       <div class="trend-tabs" role="tablist" aria-label="Over or under">
-        <button type="button" class="trend-tab" data-side="" data-tab="all" role="tab">All Trends</button>
-        <button type="button" class="trend-tab on" data-side="over" data-tab="over" role="tab">Over Trends</button>
+        <button type="button" class="trend-tab on" data-side="" data-tab="all" role="tab">All Trends</button>
+        <button type="button" class="trend-tab" data-side="over" data-tab="over" role="tab">Over Trends</button>
         <button type="button" class="trend-tab" data-side="under" data-tab="under" role="tab">Under Trends</button>
       </div>
 
@@ -59,11 +59,11 @@
         </label>
         <div class="filter-bar">
           <label class="toggle">
-            <input type="checkbox" id="view-value" checked>
+            <input type="checkbox" id="view-value">
             <span>Best value</span>
           </label>
           <label class="toggle">
-            <input type="checkbox" id="hide-out" checked>
+            <input type="checkbox" id="hide-out">
             <span>Hide Out</span>
           </label>
           <label class="toggle" id="gimme-wrap" hidden>
@@ -79,15 +79,8 @@
         <h2 class="section-title" id="top-title">Top 10 Trends</h2>
         <div id="top-list" class="list top-list"></div>
       </section>
-      <div class="pager top-pager">
-        <button id="show-more-trends" class="more" type="button" hidden>Show more trends</button>
-      </div>
       <section id="more-block" hidden>
-        <h2 class="section-title" id="more-title">More trends</h2>
         <div id="list" class="list"></div>
-        <div class="pager">
-          <button id="more" class="more" hidden>Load more</button>
-        </div>
       </section>
       <div class="pager">
         <p class="empty" id="empty" hidden>No props match these filters.</p>
@@ -108,6 +101,7 @@
       <div id="player-context" class="context"></div>
       <div class="detail-tabs" role="tablist">
         <button type="button" class="detail-tab on" data-tab="box">Box Score</button>
+        <button type="button" class="detail-tab" data-tab="matchup">Matchup</button>
         <button type="button" class="detail-tab" data-tab="injuries">Injuries</button>
         <button type="button" class="detail-tab" data-tab="news">News</button>
       </div>
@@ -115,6 +109,13 @@
     </section>
   </div>
 
+  <div id="modal-root" class="modal-root" hidden>
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal" role="dialog" aria-modal="true" id="modal">
+      <button type="button" class="modal-close" data-close-modal aria-label="Close">×</button>
+      <div id="modal-body"></div>
+    </div>
+  </div>
   <div id="toast" class="toast" hidden></div>
   <footer class="legal">Research only — not a sportsbook, not betting advice. 21+.</footer>
   <script src="/app.js"></script>

@@ -30,7 +30,7 @@ from propscore.odds import odds_status
 ET = ZoneInfo("America/New_York")
 ROOT = Path(__file__).resolve().parent.parent
 STATIC = Path(__file__).resolve().parent / "static"
-REFRESH_HOUR = int(os.environ.get("PROPSCORE_REFRESH_HOUR", "10"))
+REFRESH_HOUR = int(os.environ.get("PROPSCORE_REFRESH_HOUR", "5"))
 SPORTS = [
     {"key": "nba", "name": "NBA", "available": True},
     {"key": "nhl", "name": "NHL", "available": True},
@@ -44,7 +44,7 @@ log = logging.getLogger("propscore")
 _refresh_lock = threading.Lock()
 _refresh_state: dict = {"running": False, "last": None, "error": None}
 
-app = FastAPI(title="Da Real Big Homie Props", version="1.7.0", docs_url="/api/docs", redoc_url=None)
+app = FastAPI(title="Da Real Big Homie Props", version="1.8.0", docs_url="/api/docs", redoc_url=None)
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
 
@@ -82,7 +82,7 @@ def health():
         "nhl_dates": available_dates("nhl"),
         "nfl_dates": available_dates("nfl"),
         "refresh": _refresh_state,
-        "features": "perf-v1",
+        "features": "strong-v1",
         "app": "Da Real Big Homie Props",
         "odds": odds_status(),
     }
@@ -110,7 +110,7 @@ def board(
     stat: str = "",
     game: str = "",
     min_l10: float = Query(0.0, ge=0, le=1),
-    hide_out: bool = True,
+    hide_out: bool = False,
     hide_gimme: bool = False,
     view: str = Query("value", pattern="^(value|all)$"),
     q: str = "",
@@ -186,7 +186,32 @@ def player_logs(request: Request, sport: str, player_id: str, date: Optional[str
     return json_response(request, key, token, build=build)
 
 
+@app.get("/api/{sport}/report/{player_id}")
+def prop_report(
+    request: Request,
+    sport: str,
+    player_id: str,
+    date: Optional[str] = None,
+    prop: str = "",
+    side: str = Query("over", pattern="^(over|under)$"),
+    line: Optional[float] = None,
+):
+    sport = _sport_or_404(sport)
+    resolved = _board_date(sport, date)
+    token = STORE.token(sport, resolved)
+    key = f"report:{sport}:{resolved}:{player_id}:{prop}:{side}:{line}"
+
+    def build():
+        payload = STORE.prop_report(sport, resolved, player_id, prop, side, line)
+        if not payload:
+            raise HTTPException(404, "No report for that player and prop on this slate.")
+        return payload
+
+    return json_response(request, key, token, build=build)
+
+
 @app.get("/api/{sport}/game/{event_id}")
+
 def game_context(request: Request, sport: str, event_id: str, date: Optional[str] = None):
     sport = _sport_or_404(sport)
     resolved = _board_date(sport, date)

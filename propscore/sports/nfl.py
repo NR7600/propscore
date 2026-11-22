@@ -34,8 +34,8 @@ SKILL_POS = {"QB", "RB", "FB", "WR", "TE", "HB", "TB", "WB"}
 SKIP_GROUPS = {"defense", "specialteam", "specialteams", "practicesquad"}
 
 PASS_PROPS = ["pass_yds", "pass_td", "completions", "pass_att", "ints"]
-RUSH_PROPS = ["rush_yds", "rush_att"]
-REC_PROPS = ["receptions", "rec_yds"]
+RUSH_PROPS = ["rush_yds", "rush_att", "long_rush"]
+REC_PROPS = ["receptions", "rec_yds", "long_rec"]
 COMBO_PROPS = ["rush_rec_yds", "anytime_td"]
 
 MIN_SEASON_GAMES = 3
@@ -155,6 +155,8 @@ def _events_from_gamelog(data: dict, season_year: int, prior: bool) -> list[Game
                 rec_yds = _stat(stats, index, "receivingYards")
                 rec_td = _stat(stats, index, "receivingTouchdowns")
                 targets = _stat(stats, index, "receivingTargets")
+                long_rush = _stat(stats, index, "longRushing")
+                long_rec = _stat(stats, index, "longReception")
                 anytime = rush_td + rec_td
                 at_vs = (meta.get("atVs") or "").strip()
                 is_home = at_vs.lower() in {"vs", "vs."}
@@ -184,6 +186,8 @@ def _events_from_gamelog(data: dict, season_year: int, prior: bool) -> list[Game
                     rec_td=rec_td,
                     targets=targets,
                     anytime_td=anytime,
+                    long_rush=long_rush,
+                    long_rec=long_rec,
                     prior_season=prior,
                     season_year=season_year,
                 )
@@ -262,8 +266,10 @@ class NFL:
         "rush_att": "RUSH ATT",
         "receptions": "REC",
         "rec_yds": "REC YDS",
-        "rush_rec_yds": "RUSH+REC",
-        "anytime_td": "ANY TD",
+        "rush_rec_yds": "RUSH+REC YDS",
+        "anytime_td": "RUSH+REC TD",
+        "long_rush": "LONG RUSH",
+        "long_rec": "LONG REC",
     }
 
     def __init__(self, client: HttpClient):
@@ -395,11 +401,11 @@ class NFL:
 
     def fetch_game_logs(self, player_id: str) -> list[GameLog]:
         current = self._fetch_season_logs(player_id, SEASON_YEAR, prior=False)
-        played_now = [g for g in current if _played_role(g)]
         rows = list(current)
-        if 3 <= len(played_now) < 20:
-            prior = self._fetch_season_logs(player_id, PRIOR_SEASON_YEAR, prior=True)
-            rows.extend(prior)
+        rows.extend(self._fetch_season_logs(player_id, PRIOR_SEASON_YEAR, prior=True))
+        played = [g for g in rows if g.minutes and g.minutes > 0]
+        if len(played) < 30:
+            rows.extend(self._fetch_season_logs(player_id, PRIOR_SEASON_YEAR - 1, prior=True))
         uniq: dict[str, GameLog] = {}
         for row in rows:
             uniq[row.event_id or f"{row.date}-{row.opponent_abbr}"] = row

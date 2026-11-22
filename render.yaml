@@ -12,7 +12,7 @@ services:
       - key: PYTHONUNBUFFERED
         value: "1"
       - key: PROPSCORE_REFRESH_HOUR
-        value: "10"
+        value: "5"
       # Optional: set a token, then call POST /api/refresh with header X-Refresh-Token.
       - key: REFRESH_TOKEN
         sync: false

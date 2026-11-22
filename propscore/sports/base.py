@@ -100,6 +100,10 @@ class GameLog:
     rec_td: int = 0
     targets: int = 0
     anytime_td: int = 0
+    turnovers: int = 0
+    long_rush: int = 0
+    long_rec: int = 0
+    fg_made: int = 0
     prior_season: bool = False
     season_year: int = 0
 
@@ -118,6 +122,16 @@ class GameLog:
             raw = self.rush_yds + self.rec_yds
         elif stat == "anytime_td":
             raw = self.anytime_td if self.anytime_td else (self.rush_td + self.rec_td)
+        elif stat == "stl_blk":
+            raw = self.steals + self.blocked
+        elif stat == "turnovers":
+            raw = self.turnovers
+        elif stat == "long_rush":
+            raw = self.long_rush
+        elif stat == "long_rec":
+            raw = self.long_rec
+        elif stat == "fg_made":
+            raw = self.fg_made
         else:
             raw = getattr(self, stat, 0)
         try:

@@ -4,9 +4,8 @@
   const state = {
     sport: "nba",
     date: null,
-    side: "over",
-    tab: "over",
-    moreOpen: false,
+    side: "",
+    tab: "all",
     top: [],
     moreRows: [],
     showMoreLines: false,
@@ -15,9 +14,9 @@
     q: "",
     minL10: 0,
     minOdds: null,
-    hideOut: true,
+    hideOut: false,
     hideGimme: false,
-    viewValue: true,
+    viewValue: false,
     perfect: false,
     sortStreak: false,
     page: 1,
@@ -59,8 +58,8 @@
 
 
   function firstMeta(sport) {
-    if (sport === "nhl") return { key: "first_goal", chip: "1G (First Goal)", all: "All Stats (No 1G)", title: "First Goal" };
-    if (sport === "nfl") return { key: "first_td", chip: "1TD (First TD)", all: "All Stats (No 1TD)", title: "First TD" };
+    if (sport === "nhl") return { key: "first_goal", chip: "1G (First Goal)", all: "All Stats (No Goals)", title: "First Goal" };
+    if (sport === "nfl") return { key: "first_td", chip: "1TD (First TD)", all: "All Stats (No TDs)", title: "First TD" };
     return { key: "first_basket", chip: "1FG (First Basket)", all: "All Stats (No 1FG)", title: "First FGM" };
   }
   function isFirstProp(prop) {
@@ -123,6 +122,7 @@
     if (state.game) p.set("game", state.game);
     if (state.q) p.set("q", state.q);
     if (state.side) p.set("side", state.side);
+    if (state.tab) p.set("tab", state.tab);
     p.set("min_l10", "0");
     p.set("hide_out", state.hideOut ? "true" : "false");
     p.set("hide_gimme", state.hideGimme ? "true" : "false");
@@ -130,7 +130,7 @@
     p.set("perfect", state.perfect ? "true" : "false");
     p.set("sort", state.sortStreak ? "streak" : "score");
     p.set("page", String(page));
-    p.set("page_size", "25");
+    p.set("page_size", "10");
     return `/api/${state.sport}/board?${p.toString()}`;
   }
 
@@ -150,7 +150,6 @@
     state.props = data.props || state.props;
     if (!append) {
       state.top = data.top || [];
-      state.moreOpen = false;
       state.rows = data.rows || [];
     } else {
       state.rows = state.rows.concat(data.rows || []);
@@ -159,32 +158,24 @@
     const first = !!data.first_mode || isFirstProp(state.stat);
     $("board-view").classList.toggle("first-mode", first);
     const slate = formatSlateDate(data.date);
-    $("date-line").textContent = slate
-      ? `${slate} slate • Ranked By Trend Strength`
-      : "Updated Daily • Ranked By Trend Strength";
+    $("date-line").textContent = "Updated Daily • Ranked By Trend Strength";
     $("view-note").textContent = data.view_label || "";
     const firstLabel = meta.title;
     $("top-title").textContent = first ? `Top 10 ${firstLabel}` : "Top 10 Trends";
-    $("more-title").textContent = first ? `More ${firstLabel} trends` : "More trends";
     state.slateMessage = data.slate_message || "";
     renderGames();
     renderStatPills();
     if (!append) renderTop();
     renderList(append);
-    const moreCount = data.total || 0;
     const topCount = (state.top || []).length;
-    $("count").textContent = topCount
-      ? `Top ${topCount}${moreCount ? ` · ${moreCount} more` : ""}`
-      : `${moreCount} trends`;
+    $("count").textContent = topCount ? `Top ${topCount}` : "No strong trends for these filters";
     const emptyEl = $("empty");
-    const hasRows = topCount > 0 || moreCount > 0;
+    const hasRows = topCount > 0;
     emptyEl.hidden = hasRows;
-    emptyEl.textContent = hasRows ? "No props match these filters." : (state.slateMessage || "No props match these filters.");
+    emptyEl.textContent = hasRows ? "No props match these filters." : (state.slateMessage || "No strong trends match these filters.");
     $("top-wrap").hidden = topCount === 0;
-    $("show-more-trends").hidden = moreCount === 0 || state.moreOpen;
-    $("show-more-trends").textContent = `Show more trends (${moreCount})`;
-    if (!append) $("more-block").hidden = !state.moreOpen;
-    $("more").hidden = !state.moreOpen || !data.has_more;
+    const moreBlock = $("more-block");
+    if (moreBlock) moreBlock.hidden = true;
     $("gimme-wrap").hidden = first || state.viewValue !== false;
     $("status").textContent = "";
   }
@@ -278,40 +269,88 @@
       .join("");
   }
 
+  function isOutStatus(status) {
+    if (!status) return false;
+    const text = String(status).trim().toLowerCase();
+    if (["out", "ofs", "ir", "ir-lt", "ltir", "injured reserve"].includes(text)) return true;
+    return text.includes("injured reserve");
+  }
+
+  function displayWindows(row) {
+    if (Array.isArray(row.windows) && row.windows.length) return row.windows.slice(0, 6);
+    const all = [4, 5, 6, 8, 9, 10, 12, 15, 20];
+    const items = [];
+    for (const n of all) {
+      const hits = row[`l${n}_hits`];
+      const games = row[`l${n}_games`];
+      if (!games) continue;
+      const rate = row[`l${n}`] != null ? row[`l${n}`] : hits / games;
+      items.push({ n, hits, games, rate });
+    }
+    items.sort((a, b) => (b.rate - a.rate) || (b.games - a.games) || (b.n - a.n));
+    const seen = new Set();
+    const unique = [];
+    for (const item of items) {
+      if (item.games < item.n) {
+        const key = `${item.hits}/${item.games}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+      }
+      unique.push(item);
+      if (unique.length >= 6) break;
+    }
+    return unique;
+  }
+
+  function streakLines(row) {
+    const game = row.streak || 0;
+    const home = row.home_streak || 0;
+    const away = row.away_streak || 0;
+    const venueN = row.venue === "H" ? home : away;
+    const venueLabel = row.venue === "H" ? "home" : "away";
+    if (state.sortStreak) {
+      const cands = [];
+      if (game) cands.push({ n: game, label: `${game}x game streak` });
+      if (home) cands.push({ n: home, label: `${home}x home streak` });
+      if (away) cands.push({ n: away, label: `${away}x away streak` });
+      if (!cands.length) return [];
+      cands.sort((a, b) => b.n - a.n);
+      return [cands[0].label];
+    }
+    const lines = [];
+    if (game) lines.push(`${game}x game streak`);
+    if (venueN) lines.push(`${venueN}x ${venueLabel} streak`);
+    return lines;
+  }
+
   function cardHTML(row, rank, featured) {
     const first = isFirstProp(row.prop) || row.first_kind;
     const over = (row.side || "over") === "over";
-    const cell = (h, n, r) => {
-      if (!n) return `<div class="rate muted">—</div>`;
+    const wins = displayWindows(row);
+    const cell = (w) => {
+      if (!w || !w.games) return `<div class="rate muted">—</div>`;
+      const r = w.rate != null ? w.rate : (w.hits / w.games);
       const cls = r >= 0.999 ? "" : r >= 0.7 ? "" : "muted";
-      return `<div class="rate ${cls}">${frac(h, n)} games <b>${pct(r)}%</b></div>`;
+      return `<div class="rate ${cls}">${frac(w.hits, w.games)} games <b>${pct(r)}%</b></div>`;
     };
-    const leftCol = [
-      cell(row.l4_hits, row.l4_games, row.l4),
-      cell(row.l8_hits, row.l8_games, row.l8),
-      cell(row.l15_hits, row.l15_games, row.l15),
-    ].join("");
-    const rightCol = [
-      cell(row.l5_hits, row.l5_games, row.l5),
-      cell(row.l10_hits, row.l10_games, row.l10),
-      cell(row.l20_hits, row.l20_games, row.l20),
-    ].join("");
+    const mid = Math.ceil(wins.length / 2) || 0;
+    const leftCol = wins.slice(0, mid).map(cell).join("");
+    const rightCol = wins.slice(mid).map(cell).join("");
     const windows = `<div class="rates-col">${leftCol}</div><div class="rates-col">${rightCol}</div>`;
-    const streaks = [];
-    if (row.streak) streaks.push(`${row.streak}x game streak`);
-    if (row.home_streak) streaks.push(`${row.home_streak}x home streak`);
-    if (row.away_streak) streaks.push(`${row.away_streak}x away streak`);
+    const streaks = streakLines(row);
+    const streakHtml = streaks.length
+      ? `<div class="streaks">${streaks.map(escapeHtml).join(" · ")}</div>`
+      : `<div class="streaks none">No streaks</div>`;
     const chips = [];
     if (row.h2h_games) chips.push(`H2H ${frac(row.h2h_hits, row.h2h_games)} ${pct(row.h2h)}%`);
     const rest = restLabel(row);
     if (rest) chips.push(rest);
     if (row.matchup_tag) chips.push(`${row.matchup_tag} matchup`);
-    if (row.injury_status) chips.push(row.injury_status);
     if (row.without && row.without.length) {
       const w = row.without[0];
       chips.push(`W/O ${w.player.split(" ").slice(-1)[0]} ${pct(w.rate)}%`);
     }
-    if (row.prior_games) chips.push(`L15/L20 include ${row.prior_games} game${row.prior_games === 1 ? "" : "s"} from last season`);
+    if (row.prior_games) chips.push(`Includes ${row.prior_games} game${row.prior_games === 1 ? "" : "s"} from a prior season`);
     if (first) {
       if (row.season_games) chips.unshift(`${frac(row.season_hits, row.season_games)} games (${pct(row.season)}%)`);
       if (row.started_last) chips.push("Starter last game");
@@ -323,12 +362,13 @@
     }
     const sideCls = first ? "first" : (over ? "" : "under");
     const sideTxt = first ? (row.prop_label || "1st") : (over ? "Over" : "Under");
-    return `<article class="card ${featured ? "top-card" : ""}" data-player="${row.player_id}" data-prop="${row.prop}" data-side="${row.side}" data-line="${row.line}">
+    const outBadge = isOutStatus(row.injury_status) ? `<span class="badge-out">OUT</span>` : "";
+    return `<article class="card ${featured ? "top-card" : ""}" data-player="${row.player_id}" data-prop="${row.prop}" data-side="${row.side}" data-line="${row.line}" data-event="${row.event_id || ""}">
       <div class="card-top">
         <div class="rank-wrap">
           <div class="rank"><small>RANK</small><b>${rank}</b></div>
           <div class="who">
-            <div class="name">${escapeHtml(row.player)}</div>
+            <div class="name">${escapeHtml(row.player)}${outBadge}</div>
             <div class="meta">${escapeHtml(row.team ? row.team + " · " : "")}${escapeHtml(row.game || matchupText(row))}${row.game_time_et ? " · " + escapeHtml(row.game_time_et) : ""}${row.position ? " · " + escapeHtml(row.position) : ""}</div>
           </div>
         </div>
@@ -336,11 +376,12 @@
       </div>
       <div class="market">${escapeHtml(row.line_label)}${row.book_title && row.line_source === "live" ? ` · ${escapeHtml(row.book_title)}` : ""}${row.line_source === "est" ? `<span class="est-badge">est. line</span>` : ""}</div>
       <div class="rates-grid">${windows}</div>
-      ${streaks.length ? `<div class="streaks">${streaks.map(escapeHtml).join(" · ")}</div>` : ""}
+      ${streakHtml}
       ${chips.length ? `<div class="chips">${chips.map((c) => `<span class="chip">${escapeHtml(c)}</span>`).join("")}</div>` : ""}
       <div class="card-foot">
-        <button type="button" class="view-log" data-open="${row.player_id}">VIEW GAME LOG</button>
-        <button type="button" class="full-hist" data-open="${row.player_id}">full history &gt;</button>
+        <button type="button" class="view-log" data-open-log>VIEW GAME LOG</button>
+        <button type="button" class="gen-report" data-open-report>Generate Report</button>
+        <button type="button" class="full-hist" data-open-log>full history &gt;</button>
       </div>
     </article>`;
   }
@@ -461,9 +502,12 @@
     $("player-lines").innerHTML = `<div class="stat-pills wrap">${propPills}</div><div class="stat-pills wrap" style="padding-top:0">${linePills}</div>${moreBtn}`;
     renderChart(data.logs || [], row);
     $("player-stats").innerHTML = [
+      rateBox("L4", row.l4, row.l4_hits, row.l4_games),
       rateBox("L5", row.l5, row.l5_hits, row.l5_games, row.l5_avg),
+      rateBox("L6", row.l6, row.l6_hits, row.l6_games),
+      rateBox("L8", row.l8, row.l8_hits, row.l8_games),
+      rateBox("L9", row.l9, row.l9_hits, row.l9_games),
       rateBox("L10", row.l10, row.l10_hits, row.l10_games, row.l10_avg),
-      rateBox("L20", row.l20, row.l20_hits, row.l20_games, row.l20_avg),
       rateBox("Season", row.season, row.season_hits, row.season_games, row.season_avg),
       rateBox("H2H", row.h2h, row.h2h_hits, row.h2h_games, row.h2h_avg),
     ].join("");
@@ -486,6 +530,10 @@
     if (prop === "threes") return log.threes || 0;
     if (prop === "rush_rec_yds") return (log.rush_yds || 0) + (log.rec_yds || 0);
     if (prop === "anytime_td") return log.anytime_td ?? ((log.rush_td || 0) + (log.rec_td || 0));
+    if (prop === "stl_blk") return (log.steals || 0) + (log.blocked || 0);
+    if (prop === "turnovers") return log.turnovers || 0;
+    if (prop === "long_rush") return log.long_rush || 0;
+    if (prop === "long_rec") return log.long_rec || 0;
     return log[prop] ?? 0;
   }
 
@@ -495,14 +543,11 @@
     return row.side === "under" ? v < row.line : v >= row.line;
   }
 
-  function renderChart(logs, row) {
+  function chartHTML(logs, row) {
     const first = isFirstProp(row.prop);
-    let recent = (logs || []).slice(0, 10);
+    let recent = (logs || []).filter((g) => g.minutes || g.first_score != null).slice(0, 10);
     if (first) recent = (logs || []).filter((g) => g.first_score != null).slice(0, 10);
-    if (!recent.length) {
-      $("chart-wrap").innerHTML = `<p class="status">No game log yet.</p>`;
-      return;
-    }
+    if (!recent.length) return `<p class="status">No game log yet.</p>`;
     const values = recent.map((g) => Number(logValue(g, row.prop) || 0));
     const max = first ? 1 : Math.max(row.display_line || row.line || 1, ...values, 1);
     const bars = recent
@@ -525,10 +570,14 @@
          <span><i class="dot miss"></i>No</span>`
       : `<span><i class="dot hit"></i>Over ${escapeHtml(String(line))}</span>
          <span><i class="dot miss"></i>Under ${escapeHtml(String(line))}</span>`;
-    $("chart-wrap").innerHTML = `<div class="chart">
+    return `<div class="chart">
       <div class="bars">${bars}</div>
       <div class="legend">${legend}</div>
     </div>`;
+  }
+
+  function renderChart(logs, row) {
+    $("chart-wrap").innerHTML = chartHTML(logs, row);
   }
 
   function renderContext(row, player) {
@@ -550,7 +599,7 @@
         L5 ${row.min_l5 ?? "—"} · L10 ${row.min_l10 ?? "—"} · Season ${row.avg_minutes ?? "—"}
         <div class="min-trend">${spark}</div></div>`);
     } else if (row.prior_games) {
-      bits.push(`<div class="ctx"><div class="lbl">Sample</div>Season windows use this season; L15/L20 include ${row.prior_games} game${row.prior_games === 1 ? "" : "s"} from last season.</div>`);
+      bits.push(`<div class="ctx"><div class="lbl">Sample</div>Season windows use this season; L9/L10 include ${row.prior_games} game${row.prior_games === 1 ? "" : "s"} from last season.</div>`);
     }
     const rest = restLabel(row) || "—";
     bits.push(`<div class="ctx"><div class="lbl">Rest</div>${escapeHtml(rest)}</div>`);
@@ -583,8 +632,9 @@
     const row = selectedRow();
     const game = data.game || {};
     if (tab === "box") return renderBox(data.logs || [], row);
-    if (tab === "injuries") return renderInjuries(game);
-    return renderNews(game);
+    if (tab === "matchup") return renderMatchup(game, "player-panel");
+    if (tab === "injuries") return renderInjuries(game, "player-panel");
+    return renderNews(game, "player-panel");
   }
 
   function renderBox(logs, row) {
@@ -619,6 +669,8 @@
         { label: "RYD", value: (g) => g.rush_yds || 0 },
         { label: "REC", value: (g) => g.receptions || 0 },
         { label: "REY", value: (g) => g.rec_yds || 0 },
+        { label: "LR", value: (g) => g.long_rush || 0 },
+        { label: "LREC", value: (g) => g.long_rec || 0 },
         { label: "TD", value: (g) => g.anytime_td ?? ((g.rush_td || 0) + (g.rec_td || 0)) },
       ];
     }
@@ -639,6 +691,7 @@
       ];
     }
     return [
+      { label: "OPP", value: (g) => `${g.venue === "H" || g.is_home ? "vs" : "@"} ${g.opponent_abbr || ""}` },
       { label: "MIN", value: (g) => g.minutes },
       { label: "PTS", value: (g) => g.points },
       { label: "REB", value: (g) => g.rebounds },
@@ -647,26 +700,92 @@
       { label: "3PM", value: (g) => g.threes },
       { label: "STL", value: (g) => g.steals || 0 },
       { label: "BLK", value: (g) => g.blocked || 0 },
+      { label: "TO", value: (g) => g.turnovers || 0 },
+      { label: "1FG", value: (g) => g.first_score == null ? "—" : (Number(g.first_score) === 1 ? "Yes" : "No") },
     ];
   }
 
-  function renderInjuries(game) {
+  function updatedAgo(iso) {
+    if (!iso) return "";
+    let t = Date.parse(iso);
+    if (!Number.isFinite(t)) {
+      const m = String(iso).match(/^(\d{4}-\d{2}-\d{2})\s+(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+      if (m) {
+        let h = parseInt(m[2], 10);
+        const min = parseInt(m[3], 10);
+        if (/pm/i.test(m[4]) && h !== 12) h += 12;
+        if (/am/i.test(m[4]) && h === 12) h = 0;
+        t = new Date(`${m[1]}T${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}:00`).getTime();
+      }
+    }
+    if (!Number.isFinite(t)) return "";
+    const mins = Math.max(0, Math.round((Date.now() - t) / 60000));
+    if (mins < 1) return "Updated just now";
+    if (mins === 1) return "Updated 1 min ago";
+    if (mins < 60) return `Updated ${mins} min ago`;
+    const hrs = Math.round(mins / 60);
+    return hrs === 1 ? "Updated 1 hr ago" : `Updated ${hrs} hr ago`;
+  }
+
+  function rankTone(rank, teams, kind) {
+    if (!rank || !teams) return "neutral";
+    const third = Math.max(Math.floor(teams / 3), 1);
+    if (kind === "defense") {
+      if (rank <= third) return "tough";
+      if (rank > teams - third) return "smash";
+      return "neutral";
+    }
+    if (rank <= third) return "smash";
+    if (rank > teams - third) return "tough";
+    return "neutral";
+  }
+
+  function renderMatchup(game, targetId) {
+    const host = $(targetId || "player-panel");
+    const m = game.matchup || {};
+    const teams = m.teams || 30;
+    const legend = m.legend || `Ranked out of ${teams} teams · Red = tough, Green = smash`;
+    const block = (side, label) => {
+      if (!side || !side.abbr) return "";
+      const def = side.defense || {};
+      const off = side.offense || {};
+      const defTone = rankTone(def.rank, def.teams || teams, "defense");
+      const offTone = rankTone(off.rank, off.teams || teams, "offense");
+      const defTxt = def.label || (def.rank ? `${side.abbr} defense ${def.rank} of ${def.teams || teams}` : "—");
+      const offTxt = off.label || (off.rank ? `${side.abbr} offense ${off.rank} of ${off.teams || teams}` : "—");
+      return `<div class="matchup-team">
+        <h4>${escapeHtml(label)} · ${escapeHtml(side.abbr)}</h4>
+        <div class="match-row"><span>Defense</span><span class="${defTone}">${escapeHtml(defTxt)}</span></div>
+        <div class="match-row"><span>Offense</span><span class="${offTone}">${escapeHtml(offTxt)}</span></div>
+        <div class="match-row"><span>Shooting</span><span class="neutral">Not in ESPN standings</span></div>
+      </div>`;
+    };
+    host.innerHTML = `<p class="matchup-legend">${escapeHtml(legend)}</p>
+      ${block(m.away, "Away")}${block(m.home, "Home")}` || `<p class="status">No matchup ranks for this game.</p>`;
+  }
+
+  function renderInjuries(game, targetId) {
+    const host = $(targetId || "player-panel");
     const inj = game.injuries || [];
+    const selected = game._injTeam || "";
     const teams = [...new Set(inj.map((i) => i.team).filter(Boolean))];
     const pills = teams
-      .map((t) => `<span class="pill on" style="pointer-events:none">${escapeHtml(t)}</span>`)
+      .map((t) => `<button type="button" class="pill ${!selected || selected === t ? "on" : ""}" data-inj-team="${escapeHtml(t)}">${escapeHtml(t)}</button>`)
       .join("");
-    const rows = inj
+    const shown = selected ? inj.filter((i) => i.team === selected) : inj;
+    const rows = shown
       .map((i) => `<div class="inj-row"><div><b>${escapeHtml(i.player)}</b><div class="meta" style="color:var(--muted);font-size:12px">${escapeHtml([i.team, i.position, i.detail].filter(Boolean).join(" · "))}</div></div><span class="badge">${escapeHtml(i.status || "Out")}</span></div>`)
       .join("");
-    $("player-panel").innerHTML = `<div class="inj-list">
+    const stamp = updatedAgo(game.injuries_updated_at) || "Updated from the ESPN injury report";
+    host.innerHTML = `<div class="inj-list">
       <div class="inj-teams">${pills || ""}</div>
       ${rows || `<p class="status">No injury listings for this matchup.</p>`}
-      <div class="updated">From ESPN injury report</div>
+      <div class="inj-stamp">${escapeHtml(stamp)}</div>
     </div>`;
   }
 
-  function renderNews(game) {
+  function renderNews(game, targetId) {
+    const host = $(targetId || "player-panel");
     const news = (game.news && game.news.length ? game.news : (game.injuries || []).filter((i) => i.comment)) || [];
     const cards = news
       .map((i) => `<article class="news-card">
@@ -677,10 +796,143 @@
         <p>${escapeHtml(i.comment || i.detail || "")}</p>
       </article>`)
       .join("");
-    $("player-panel").innerHTML = `${cards || `<p class="status">No game-level injury notes on this matchup.</p>`}
+    host.innerHTML = `${cards || `<p class="status">No game-level injury notes on this matchup.</p>`}
       <div class="updated">Injury comments from ESPN — not a live news wire.</div>`;
   }
 
+
+
+  function closeModal() {
+    const root = $("modal-root");
+    if (root) root.hidden = true;
+    $("modal-body").innerHTML = "";
+    state.modal = null;
+  }
+
+  function openModal(html) {
+    $("modal-body").innerHTML = html;
+    $("modal-root").hidden = false;
+  }
+
+  function cardFromEl(el) {
+    const card = el.closest(".card");
+    if (!card) return null;
+    const pid = card.dataset.player;
+    const prop = card.dataset.prop;
+    const side = card.dataset.side;
+    const line = card.dataset.line;
+    const rows = (state.top || []).concat(state.rows || []);
+    return rows.find((r) => String(r.player_id) === String(pid) && String(r.prop) === String(prop) && String(r.side) === String(side) && String(r.line) === String(line)) || null;
+  }
+
+  async function openReport(row) {
+    if (!row) return;
+    openModal(`<p class="report-title">PROP REPORT</p><p class="status">Loading report…</p>`);
+    const q = new URLSearchParams({ prop: row.prop, side: row.side || "over", line: String(row.line) });
+    if (state.date) q.set("date", state.date);
+    try {
+      const data = await api(`/api/${state.sport}/report/${row.player_id}?${q.toString()}`);
+      state.modal = { type: "report", data, row };
+      const gameData = data.game_ranks || {};
+      const league = data.league_ranks || {};
+      const rankBox = (title, info) => {
+        if (!info) return "";
+        return `<div class="rank-box"><div class="k">${escapeHtml(title)}</div><div class="v">${escapeHtml(info.label)}</div></div>`;
+      };
+      const trend = (data.trend_lines || []).map((line) => `<p class="trend-line">${escapeHtml(line)}</p>`).join("");
+      const oddsGame = gameData.odds ? rankBox("Odds Rank", gameData.odds) : "";
+      const oddsLeague = league.odds ? rankBox("Odds Rank", league.odds) : "";
+      $("modal-body").innerHTML = `
+        <p class="report-title">PROP REPORT</p>
+        <h2 class="report-player">${escapeHtml(data.player)}</h2>
+        <p class="report-meta">${escapeHtml(data.team || "")}</p>
+        <p class="report-market">${escapeHtml(data.header || data.line_label || "")}</p>
+        <div class="report-section">
+          <h3>Trend Data (${data.trend_count || 0} found)</h3>
+          ${trend || "<p class='status'>No trend windows for this prop.</p>"}
+        </div>
+        <div class="report-section">
+          <h3>Rank Comparison by Game</h3>
+          <div class="rank-grid">
+            ${rankBox("Data Rank", gameData.data)}
+            ${oddsGame}
+          </div>
+        </div>
+        <div class="report-section">
+          <h3>League Wide</h3>
+          <div class="rank-grid">
+            ${rankBox("Data Rank", league.data)}
+            ${oddsLeague}
+          </div>
+          <p class="blurb">${escapeHtml((data.blurbs && data.blurbs.data) || "")}</p>
+          ${oddsLeague || oddsGame ? `<p class="blurb">${escapeHtml((data.blurbs && data.blurbs.odds) || "")}</p>` : ""}
+        </div>`;
+    } catch (err) {
+      $("modal-body").innerHTML = `<p class="report-title">PROP REPORT</p><p class="status">${escapeHtml(err.message || "Could not load the report.")}</p>`;
+    }
+  }
+
+  function boxHTML(logs, row, sport, role) {
+    const cols = boxCols(sport, role, row && row.prop);
+    const body = (logs || [])
+      .slice(0, 20)
+      .map((g) => {
+        const hit = row ? isHit(g, row) : false;
+        const date = (g.date || "").slice(5);
+        const cells = cols.map((c) => `<td>${escapeHtml(String(c.value(g)))}</td>`).join("");
+        return `<tr class="${hit ? "hit" : "miss"}"><td>${escapeHtml(date)}</td>${cells}</tr>`;
+      })
+      .join("");
+    return `<div class="box-wrap"><table class="box">
+      <thead><tr><th>DATE</th>${cols.map((c) => `<th>${c.label}</th>`).join("")}</tr></thead>
+      <tbody>${body || `<tr><td colspan="${cols.length + 1}">No games</td></tr>`}</tbody>
+    </table></div>`;
+  }
+
+  async function openGameLog(row) {
+    if (!row) return;
+    state.modal = { type: "log", row, tab: "box", logs: [], game: {}, player: { name: row.player } };
+    openModal(`<div class="log-head"><h2>${escapeHtml(row.player)}</h2><p>${escapeHtml(row.line_label || "")}</p></div><p class="status">Loading game log…</p>`);
+    const q = state.date ? `?date=${state.date}` : "";
+    try {
+      const [playerData, logsData, gameData] = await Promise.all([
+        api(`/api/${state.sport}/player/${row.player_id}${q}`).catch(() => null),
+        api(`/api/${state.sport}/player/${row.player_id}/logs${q}`).catch(() => null),
+        row.event_id ? api(`/api/${state.sport}/game/${row.event_id}${q}`).catch(() => null) : null,
+      ]);
+      const logs = (logsData && logsData.logs) || [];
+      const game = Object.assign({}, (playerData && playerData.game) || {}, gameData || {});
+      const player = (playerData && playerData.player) || { name: row.player, role: "" };
+      state.modal = { type: "log", row, tab: "box", logs, game, player };
+      renderLogModal();
+    } catch (err) {
+      $("modal-body").innerHTML = `<p class="status">${escapeHtml(err.message || "Could not load the game log.")}</p>`;
+    }
+  }
+
+  function renderLogModal() {
+    const modal = state.modal;
+    if (!modal || modal.type !== "log") return;
+    const { row, tab, logs, game, player } = modal;
+    const tabs = ["box", "matchup", "injuries", "news"]
+      .map((id) => {
+        const label = { box: "Box Score", matchup: "Matchup", injuries: "Injuries", news: "News" }[id];
+        return `<button type="button" class="detail-tab ${tab === id ? "on" : ""}" data-log-tab="${id}">${label}</button>`;
+      })
+      .join("");
+    $("modal-body").innerHTML = `
+      <div class="log-head">
+        <h2>${escapeHtml((player && player.name) || row.player)}</h2>
+        <p>${escapeHtml(row.line_label || "")} · ${escapeHtml(row.game || matchupText(row))}</p>
+      </div>
+      ${chartHTML(logs, row)}
+      <div class="detail-tabs" role="tablist">${tabs}</div>
+      <div id="log-panel"></div>`;
+    if (tab === "box") $("log-panel").innerHTML = boxHTML(logs, row, state.sport, player && player.role);
+    else if (tab === "matchup") renderMatchup(game, "log-panel");
+    else if (tab === "injuries") renderInjuries(game, "log-panel");
+    else renderNews(game, "log-panel");
+  }
 
   function openPlayerFromCard(card) {
     const id = card.dataset.player;
@@ -752,24 +1004,46 @@
       state.hideGimme = $("hide-gimme").checked;
       loadBoard();
     });
-    $("more").addEventListener("click", () => {
-      if (state.loading || state.page >= state.totalPages) return;
-      state.page += 1;
-      loadBoard({ append: true });
-    });
-    $("show-more-trends").addEventListener("click", () => {
-      state.moreOpen = true;
-      $("more-block").hidden = false;
-      $("show-more-trends").hidden = true;
-      $("more").hidden = state.page >= state.totalPages;
-    });
+    const moreBtn = $("more");
+    if (moreBtn) moreBtn.hidden = true;
     function onBoardCardClick(e) {
-      const open = e.target.closest("[data-open], .card");
       const card = e.target.closest(".card");
-      if (card && (e.target.closest("[data-open]") || e.target.closest(".card-top, .market, .rates-grid, .streaks"))) {
+      if (!card) return;
+      if (e.target.closest("[data-open-report]")) {
+        e.preventDefault();
+        openReport(cardFromEl(card));
+        return;
+      }
+      if (e.target.closest("[data-open-log]")) {
+        e.preventDefault();
+        openGameLog(cardFromEl(card));
+        return;
+      }
+      if (e.target.closest(".card-top, .market, .rates-grid, .streaks, .who")) {
         openPlayerFromCard(card);
       }
     }
+    $("modal-root").addEventListener("click", (e) => {
+      if (e.target.closest("[data-close-modal]")) {
+        closeModal();
+        return;
+      }
+      const inj = e.target.closest("[data-inj-team]");
+      if (inj && state.modal && state.modal.type === "log") {
+        const team = inj.dataset.injTeam;
+        state.modal.game._injTeam = state.modal.game._injTeam === team ? "" : team;
+        renderLogModal();
+        return;
+      }
+      const tab = e.target.closest("[data-log-tab]");
+      if (tab && state.modal && state.modal.type === "log") {
+        state.modal.tab = tab.dataset.logTab;
+        renderLogModal();
+      }
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && $("modal-root") && !$("modal-root").hidden) closeModal();
+    });
     $("list").addEventListener("click", onBoardCardClick);
     $("top-list").addEventListener("click", onBoardCardClick);
     $("back").addEventListener("click", () => {
@@ -777,7 +1051,16 @@
       $("player-view").hidden = true;
       $("board-view").hidden = false;
     });
+    $("player-panel").addEventListener("click", (e) => {
+      const inj = e.target.closest("[data-inj-team]");
+      if (!inj || !state.player) return;
+      state.player.game = state.player.game || {};
+      const team = inj.dataset.injTeam;
+      state.player.game._injTeam = state.player.game._injTeam === team ? "" : team;
+      renderInjuries(state.player.game, "player-panel");
+    });
     $("player-lines").addEventListener("click", (e) => {
+
       if (e.target.closest("#toggle-more-lines")) {
         state.showMoreLines = !state.showMoreLines;
         renderPlayer();
