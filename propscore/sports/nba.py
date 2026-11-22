@@ -12,7 +12,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from ..http import HttpClient
-from .base import Game, GameLog, Injury, Player
+from .base import Game, GameLog, Injury, Player, merge_season_logs
 
 ET = ZoneInfo("America/New_York")
 UTC = ZoneInfo("UTC")
@@ -36,10 +36,6 @@ STAT_INDEX = {
     "turnovers": 12,
     "points": 13,
 }
-
-# ESPN season filter year is the year the season *ends*.
-PRIOR_SEASON_YEARS = (SEASON_YEAR - 1, SEASON_YEAR - 2)
-
 
 def _parse_iso(value: str) -> datetime | None:
     if not value:
@@ -328,18 +324,12 @@ class NBA:
             p.injury_return = inj.return_date
 
     def fetch_game_logs(self, player_id: str) -> list[GameLog]:
-        rows = list(self._fetch_season_logs(player_id, SEASON_YEAR, prior=False))
-        current_n = sum(1 for g in rows if g.minutes and g.minutes > 0)
-        # Always attach two prior regular seasons so L15/L20 and long
-        # home/away streaks (e.g. a 53-game road run) can form.
-        for year in PRIOR_SEASON_YEARS:
-            if current_n >= 80 and any(g.season_year == year for g in rows):
-                break
-            rows.extend(self._fetch_season_logs(player_id, year, prior=True))
-        uniq: dict[str, GameLog] = {}
-        for row in rows:
-            uniq[row.event_id or f"{row.date}-{row.opponent_abbr}"] = row
-        return sorted(uniq.values(), key=lambda g: (g.date, g.event_id), reverse=True)
+        current = self._fetch_season_logs(player_id, SEASON_YEAR, prior=False)
+        return merge_season_logs(
+            current,
+            lambda year: self._fetch_season_logs(player_id, year, prior=True),
+            SEASON_YEAR,
+        )
 
     def _fetch_season_logs(self, player_id: str, season_year: int, prior: bool) -> list[GameLog]:
         data = self.client.get_json(

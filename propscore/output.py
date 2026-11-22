@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 from .ranking import PropRow, WEIGHTS, MIN_AVG_MINUTES, MIN_GAMES, STREAK_CAP, VENUE_MIN_GAMES, ALL_WINDOWS
-from .sports.base import Game, GameLog, Player
+from .sports.base import Game, GameLog, Player, STORED_LOG_LIMIT, slim_stored_log
 
 TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "templates" / "board.html"
 
@@ -77,8 +77,10 @@ def write_json(
             p.id: {
                 **p.to_dict(),
                 "logs": [
-                    _stamp_log(log.to_dict(), (first_score_flags or {}).get(p.id, {}))
-                    for log in logs.get(p.id, [])
+                    slim_stored_log(
+                        _stamp_log(log.to_dict(), (first_score_flags or {}).get(p.id, {}))
+                    )
+                    for log in logs.get(p.id, [])[:STORED_LOG_LIMIT]
                 ],
             }
             for p in players
@@ -89,7 +91,7 @@ def write_json(
         "first_score_meta": first_score_meta or {},
     }
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    path.write_text(json.dumps(payload, separators=(",", ":"), ensure_ascii=False), encoding="utf-8")
 
 
 def write_csv(path: Path, rows: list[PropRow]) -> None:

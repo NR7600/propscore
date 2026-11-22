@@ -16,7 +16,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from ..http import HttpClient
-from .base import Game, GameLog, Injury, Player
+from .base import Game, GameLog, Injury, Player, merge_season_logs
 
 ET = ZoneInfo("America/New_York")
 UTC = ZoneInfo("UTC")
@@ -28,7 +28,6 @@ GAMELOG_URL = "https://site.web.api.espn.com/apis/common/v3/sports/football/nfl/
 
 # ESPN NFL season year is the year the season starts.
 SEASON_YEAR = 2026
-PRIOR_SEASON_YEAR = SEASON_YEAR - 1
 
 SKILL_POS = {"QB", "RB", "FB", "WR", "TE", "HB", "TB", "WB"}
 SKIP_GROUPS = {"defense", "specialteam", "specialteams", "practicesquad"}
@@ -401,15 +400,11 @@ class NFL:
 
     def fetch_game_logs(self, player_id: str) -> list[GameLog]:
         current = self._fetch_season_logs(player_id, SEASON_YEAR, prior=False)
-        rows = list(current)
-        rows.extend(self._fetch_season_logs(player_id, PRIOR_SEASON_YEAR, prior=True))
-        played = [g for g in rows if g.minutes and g.minutes > 0]
-        if len(played) < 30:
-            rows.extend(self._fetch_season_logs(player_id, PRIOR_SEASON_YEAR - 1, prior=True))
-        uniq: dict[str, GameLog] = {}
-        for row in rows:
-            uniq[row.event_id or f"{row.date}-{row.opponent_abbr}"] = row
-        return sorted(uniq.values(), key=lambda g: (g.date, g.event_id), reverse=True)
+        return merge_season_logs(
+            current,
+            lambda year: self._fetch_season_logs(player_id, year, prior=True),
+            SEASON_YEAR,
+        )
 
     def _fetch_season_logs(self, player_id: str, season_year: int, prior: bool) -> list[GameLog]:
         data = self.client.get_json(

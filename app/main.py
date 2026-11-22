@@ -42,7 +42,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger("propscore")
 
 _refresh_lock = threading.Lock()
-_refresh_state: dict = {"running": False, "last": None, "error": None}
+_refresh_state: dict = {"running": False, "last": None, "error": None, "current": None, "done": []}
 
 app = FastAPI(title="Da Real Big Homie Props", version="1.8.0", docs_url="/api/docs", redoc_url=None)
 app.add_middleware(GZipMiddleware, minimum_size=500)
@@ -81,7 +81,13 @@ def health():
         "nba_dates": available_dates("nba"),
         "nhl_dates": available_dates("nhl"),
         "nfl_dates": available_dates("nfl"),
-        "refresh": _refresh_state,
+        "refresh": {
+            "running": _refresh_state.get("running"),
+            "last": _refresh_state.get("last"),
+            "error": _refresh_state.get("error"),
+            "current": _refresh_state.get("current"),
+            "done": list(_refresh_state.get("done") or []),
+        },
         "features": "strong-v1",
         "app": "Da Real Big Homie Props",
         "odds": odds_status(),
@@ -266,13 +272,18 @@ def _run_one_sport(
     skip_odds: bool = False,
     skip_pbp: bool = False,
 ) -> None:
-    cmd = [sys.executable, str(ROOT / "run.py"), sport]
+    cmd = [sys.executable, str(ROOT / "run.py"), sport, "--json-only"]
     if date:
         cmd.extend(["--date", date])
     if skip_odds:
         cmd.append("--skip-odds")
     if skip_pbp:
         cmd.append("--skip-pbp")
+    workers = os.environ.get("PROPSCORE_WORKERS", "").strip()
+    if not workers and os.environ.get("RENDER"):
+        workers = "3"
+    if workers:
+        cmd.extend(["--workers", workers])
     log.info("Refreshing board: %s", " ".join(cmd))
     proc = subprocess.run(
         cmd,
@@ -296,17 +307,32 @@ def _run_refresh_sports(
         return
     _refresh_state["running"] = True
     _refresh_state["error"] = None
+    _refresh_state["current"] = None
+    _refresh_state["done"] = []
     started = datetime.now(ET)
     try:
         from propscore.slate_date import build_date_for
+        errors: list[str] = []
         for sport in sports:
+            _refresh_state["current"] = sport
             sport_date = date or build_date_for(sport)
-            _run_one_sport(sport, sport_date, skip_odds=skip_odds, skip_pbp=skip_pbp)
-        _refresh_state["last"] = datetime.now(ET).strftime("%Y-%m-%d %I:%M %p ET")
+            try:
+                _run_one_sport(sport, sport_date, skip_odds=skip_odds, skip_pbp=skip_pbp)
+                _refresh_state["done"] = list(_refresh_state.get("done") or []) + [sport]
+                log.info("Published %s board (%s)", sport, sport_date)
+            except Exception as exc:
+                log.exception("Refresh failed for %s", sport)
+                errors.append(f"{sport}: {exc}")
+        _refresh_state["current"] = None
+        if errors:
+            _refresh_state["error"] = "; ".join(errors)
+        else:
+            _refresh_state["last"] = datetime.now(ET).strftime("%Y-%m-%d %I:%M %p ET")
         log.info("Refresh finished in %ss", int((datetime.now(ET) - started).total_seconds()))
     except Exception as exc:
         log.exception("Refresh failed")
         _refresh_state["error"] = str(exc)
+        _refresh_state["current"] = None
     finally:
         _refresh_state["running"] = False
         _refresh_lock.release()

@@ -563,19 +563,17 @@ def collect_event_ids(
             if eid not in seen:
                 seen.add(eid)
                 schedule_ids.append(eid)
-    older: list[str] = []
+    # Current-season log IDs only. Prior-season PBP used to enqueue
+    # thousands of extra summaries and blow the 400s budget on boot.
     for entries in logs.values():
         for g in entries:
+            if getattr(g, "prior_season", False):
+                continue
             eid = str(getattr(g, "event_id", "") or "")
             date = (getattr(g, "date", "") or "")[:10]
             if eid and (not date or date <= slate_date) and eid not in seen:
                 seen.add(eid)
-                # Prior-season logs go last so the PBP time budget
-                # fills this season first.
-                if getattr(g, "prior_season", False):
-                    older.append(eid)
-                else:
-                    schedule_ids.append(eid)
+                schedule_ids.append(eid)
     for g in games:
         status = (getattr(g, "status", "") or "").lower()
         if "final" in status or status in {"post", "completed", "status_final"}:
@@ -583,7 +581,7 @@ def collect_event_ids(
             if eid not in seen:
                 seen.add(eid)
                 schedule_ids.append(eid)
-    return schedule_ids + older
+    return schedule_ids
 
 
 def load_or_fetch_events(

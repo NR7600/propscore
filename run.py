@@ -49,6 +49,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Do not fetch new ESPN play-by-play; reuse the compact first-score cache only.",
     )
+    parser.add_argument(
+        "--json-only",
+        action="store_true",
+        help="Write only the board JSON (skip the CSV and static HTML copies).",
+    )
     return parser.parse_args()
 
 
@@ -177,8 +182,8 @@ def main() -> int:
             "Data from ESPN public JSON (NFL scoreboard, rosters, injuries, player gamelogs). "
             "Season year 2026 is the 2026 regular season. Only skill positions (QB, RB, FB, WR, TE) "
             "are ranked. Players need 3 games this season and a meaningful role "
-            "(pass attempts, carries, or targets). Last season always pads L15/L20 and long streaks, "
-            "and a second prior year is added when history is still short."
+            "(pass attempts, carries, or targets). Last season pads L15/L20 and streaks; "
+            "a second prior year is added only when history is still short."
         )
         notes.append(
             "NFL sportsbook markets are not purchased on the free 15-credit Odds API budget. "
@@ -287,18 +292,19 @@ def main() -> int:
         first_score_flags=first_score_flags,
         team_ranks=team_ranks,
     )
-    write_csv(stem.with_suffix(".csv"), rows)
-    write_html(
-        stem.with_suffix(".html"),
-        sport=sport.key,
-        date=date,
-        generated_at=generated_at,
-        games=games,
-        players=players,
-        logs=logs,
-        rows=rows,
-        notes=notes,
-    )
+    if not args.json_only:
+        write_csv(stem.with_suffix(".csv"), rows)
+        write_html(
+            stem.with_suffix(".html"),
+            sport=sport.key,
+            date=date,
+            generated_at=generated_at,
+            games=games,
+            players=players,
+            logs=logs,
+            rows=rows,
+            notes=notes,
+        )
 
     print()
     print("Top 10 first-score trends:")
@@ -312,7 +318,8 @@ def main() -> int:
 
     print()
     print("Wrote:")
-    for ext in (".json", ".csv", ".html"):
+    exts = (".json",) if args.json_only else (".json", ".csv", ".html")
+    for ext in exts:
         print(f"  {stem.with_suffix(ext)}")
     return 0
 

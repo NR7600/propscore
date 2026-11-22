@@ -16,7 +16,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from ..http import HttpClient
-from .base import Game, GameLog, Injury, Player
+from .base import Game, GameLog, Injury, Player, merge_season_logs
 
 ET = ZoneInfo("America/New_York")
 UTC = ZoneInfo("UTC")
@@ -28,7 +28,6 @@ GAMELOG_URL = "https://site.web.api.espn.com/apis/common/v3/sports/hockey/nhl/at
 
 # ESPN season filter year is the year the season *ends*.
 SEASON_YEAR = 2027
-PRIOR_SEASON_YEARS = (SEASON_YEAR - 1, SEASON_YEAR - 2)
 
 SKATER_INDEX = {
     "goals": 0,
@@ -299,13 +298,12 @@ class NHL:
             p.injury_return = inj.return_date
 
     def fetch_game_logs(self, player_id: str) -> list[GameLog]:
-        rows = list(self._fetch_season_logs(player_id, SEASON_YEAR, prior=False))
-        for year in PRIOR_SEASON_YEARS:
-            rows.extend(self._fetch_season_logs(player_id, year, prior=True))
-        uniq: dict[str, GameLog] = {}
-        for row in rows:
-            uniq[row.event_id or f"{row.date}-{row.opponent_abbr}"] = row
-        return sorted(uniq.values(), key=lambda g: (g.date, g.event_id), reverse=True)
+        current = self._fetch_season_logs(player_id, SEASON_YEAR, prior=False)
+        return merge_season_logs(
+            current,
+            lambda year: self._fetch_season_logs(player_id, year, prior=True),
+            SEASON_YEAR,
+        )
 
     def _fetch_season_logs(self, player_id: str, season_year: int, prior: bool) -> list[GameLog]:
         data = self.client.get_json(

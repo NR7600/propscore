@@ -64,7 +64,7 @@ class Player:
         return asdict(self)
 
 
-@dataclass
+@dataclass(slots=True)
 class GameLog:
     event_id: str
     date: str
@@ -143,6 +143,115 @@ class GameLog:
         d = asdict(self)
         d["venue"] = "H" if self.is_home else "A"
         return d
+
+
+# Render free tier is 512 MB. Rank from a short history and persist
+# only the recent games the game-log modal actually reads.
+MAX_RANK_LOGS = 80
+STORED_LOG_LIMIT = 30
+SECOND_PRIOR_BELOW = 30
+
+# Fields the board UI / report / box score read. Everything else is dropped.
+STORED_LOG_FIELDS = (
+    "event_id",
+    "date",
+    "opponent_abbr",
+    "is_home",
+    "venue",
+    "minutes",
+    "points",
+    "rebounds",
+    "assists",
+    "threes",
+    "pra",
+    "steals",
+    "blocked",
+    "fgm",
+    "goals",
+    "shots",
+    "saves",
+    "started",
+    "pass_yds",
+    "pass_td",
+    "completions",
+    "pass_att",
+    "ints",
+    "rush_yds",
+    "rush_att",
+    "rush_td",
+    "receptions",
+    "rec_yds",
+    "rec_td",
+    "targets",
+    "anytime_td",
+    "turnovers",
+    "long_rush",
+    "long_rec",
+    "first_score",
+    "prior_season",
+    "result",
+)
+# False is a real value for these; other empty/zero defaults are omitted.
+_KEEP_FALSE = {"is_home"}
+
+
+def _played_count(rows: list[GameLog]) -> int:
+    return sum(1 for g in rows if g.minutes and g.minutes > 0)
+
+
+def merge_season_logs(
+    current: list[GameLog],
+    fetch_prior,
+    current_year: int,
+    *,
+    max_logs: int = MAX_RANK_LOGS,
+    second_prior_below: int = SECOND_PRIOR_BELOW,
+) -> list[GameLog]:
+    """Current season plus at most one prior year.
+
+    A second prior year is fetched only when the player still has fewer
+    than `second_prior_below` played games (rookies / short history).
+    Rank-time history is capped at `max_logs` played games, newest first.
+    """
+    rows = list(current or [])
+    played = _played_count(rows)
+    if played < max_logs:
+        rows.extend(fetch_prior(current_year - 1) or [])
+        played = _played_count(rows)
+    if played < second_prior_below:
+        rows.extend(fetch_prior(current_year - 2) or [])
+    uniq: dict[str, GameLog] = {}
+    for row in rows:
+        uniq[row.event_id or f"{row.date}-{row.opponent_abbr}"] = row
+    ordered = sorted(uniq.values(), key=lambda g: (g.date, g.event_id), reverse=True)
+    kept: list[GameLog] = []
+    n_played = 0
+    for game in ordered:
+        kept.append(game)
+        if game.minutes and game.minutes > 0:
+            n_played += 1
+            if n_played >= max_logs:
+                break
+    return kept
+
+
+def slim_stored_log(log: dict) -> dict:
+    """Keep only UI fields and drop empty defaults so board JSON stays small."""
+    out: dict = {}
+    for key in STORED_LOG_FIELDS:
+        if key not in log:
+            continue
+        value = log[key]
+        if value is None or value == "":
+            continue
+        # False == 0 in Python, so venue flags must be checked first.
+        if key in _KEEP_FALSE:
+            out[key] = value
+            continue
+        if value is False or value == 0 or value == 0.0:
+            continue
+        out[key] = value
+    return out
 
 
 @dataclass

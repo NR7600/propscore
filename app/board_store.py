@@ -227,6 +227,14 @@ class BoardStore:
         if hit and hit[0] == mtime:
             return hit[1]
         data = _load_file(sport, date)
+        for player in (data.get("players") or {}).values():
+            logs = player.get("logs")
+            if isinstance(logs, list) and len(logs) > 30:
+                player["logs"] = logs[:30]
+        # Keep only the board we just loaded for this sport so a fat
+        # leftover file cannot pin hundreds of MB in the API process.
+        for cached_key in [k for k in self._cache if k[0] == sport and k != key]:
+            self._cache.pop(cached_key, None)
         self._cache[key] = (mtime, data)
         return data
 
