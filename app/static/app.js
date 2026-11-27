@@ -35,6 +35,40 @@
   let inflight;
   let lastGamesKey = "";
   let lastStatsKey = "";
+  let slateRetry = 0;
+
+  function todayEt() {
+    return new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+  }
+  function isLiveSlate(data) {
+    const date = data && data.date;
+    if (!date || data.stale) return false;
+    return date >= todayEt();
+  }
+  function currentDateParam() {
+    return state.date && state.date >= todayEt() ? state.date : "";
+  }
+  function showLoadingSlate() {
+    state.games = [];
+    state.top = [];
+    state.rows = [];
+    state.date = null;
+    lastGamesKey = "";
+    $("games").innerHTML = "";
+    $("list").innerHTML = "";
+    $("date-line").textContent = "Loading today's slate…";
+    $("count").textContent = "";
+    $("view-note").textContent = "";
+    $("empty").hidden = false;
+    $("empty").textContent = "Loading today's slate…";
+    showSkeletons();
+  }
+  function scheduleSlateRetry() {
+    clearTimeout(slateRetry);
+    slateRetry = setTimeout(() => {
+      if (!$("board-view").hidden) loadBoard();
+    }, 5000);
+  }
 
   function pct(rate) {
     return Math.round((rate || 0) * 100);
@@ -117,7 +151,6 @@
 
   function boardQuery(page) {
     const p = new URLSearchParams();
-    if (state.date) p.set("date", state.date);
     if (state.stat) p.set("stat", state.stat);
     if (state.game) p.set("game", state.game);
     if (state.q) p.set("q", state.q);
@@ -158,7 +191,9 @@
     const first = !!data.first_mode || isFirstProp(state.stat);
     $("board-view").classList.toggle("first-mode", first);
     const slate = formatSlateDate(data.date);
-    $("date-line").textContent = "Updated Daily • Ranked By Trend Strength";
+    const upcoming = data.date && data.date > todayEt();
+    const label = slate ? (upcoming ? `${slate} slate` : slate) : "Today";
+    $("date-line").textContent = `${label} • Updated Daily • Ranked By Trend Strength`;
     $("view-note").textContent = data.view_label || "";
     const firstLabel = meta.title;
     $("top-title").textContent = first ? `Top 10 ${firstLabel}` : "Top 10 Trends";
@@ -187,17 +222,21 @@
     if (!append) state.page = 1;
     const path = boardQuery(state.page);
     const cached = !append ? boardCache.get(path) : null;
-    if (cached) {
-      applyBoard(cached, { append: false });
-    } else if (!append && !$("top-list").querySelector(".card:not(.skeleton)")) {
-      showSkeletons();
+    const liveCached = cached && isLiveSlate(cached) ? cached : null;
+    if (liveCached) {
+      applyBoard(liveCached, { append: false });
+    } else if (!append) {
+      showLoadingSlate();
     }
     if (!append) $("board-view").classList.add("is-loading");
     else $("status").textContent = "Loading more…";
     state.loading = true;
-    $("empty").hidden = true;
     try {
       const data = await api(path, { signal: controller.signal });
+      if (!isLiveSlate(data)) {
+        throw Object.assign(new Error("Today's slate is being generated."), { status: 503 });
+      }
+      clearTimeout(slateRetry);
       if (!append) {
         boardCache.set(path, data);
         if (boardCache.size > 40) boardCache.delete(boardCache.keys().next().value);
@@ -205,7 +244,17 @@
       applyBoard(data, { append });
     } catch (err) {
       if (err.name === "AbortError") return;
-      if (!cached) $("status").textContent = err.message || "Could not load the board.";
+      if (!append) {
+        showLoadingSlate();
+        const building = err.status === 503 || err.status === 404;
+        $("empty").textContent = building
+          ? "Loading today's slate…"
+          : (err.message || "Could not load today's slate.");
+        if (building) scheduleSlateRetry();
+        $("status").textContent = "";
+      } else {
+        $("status").textContent = err.message || "Could not load the board.";
+      }
     } finally {
       if (inflight === controller) {
         state.loading = false;
@@ -404,7 +453,7 @@
     $("player-context").innerHTML = "";
     $("player-panel").innerHTML = "";
     try {
-      const q = state.date ? `?date=${state.date}` : "";
+      const q = currentDateParam() ? `?date=${currentDateParam()}` : "";
       const data = await api(`/api/${state.sport}/player/${playerId}${q}`);
       state.player = data;
       state.player.logs = state.player.logs || [];
@@ -829,7 +878,8 @@
     if (!row) return;
     openModal(`<p class="report-title">PROP REPORT</p><p class="status">Loading report…</p>`);
     const q = new URLSearchParams({ prop: row.prop, side: row.side || "over", line: String(row.line) });
-    if (state.date) q.set("date", state.date);
+    const dateParam = currentDateParam();
+    if (dateParam) q.set("date", dateParam);
     try {
       const data = await api(`/api/${state.sport}/report/${row.player_id}?${q.toString()}`);
       state.modal = { type: "report", data, row };
@@ -893,7 +943,7 @@
     if (!row) return;
     state.modal = { type: "log", row, tab: "box", logs: [], game: {}, player: { name: row.player } };
     openModal(`<div class="log-head"><h2>${escapeHtml(row.player)}</h2><p>${escapeHtml(row.line_label || "")}</p></div><p class="status">Loading game log…</p>`);
-    const q = state.date ? `?date=${state.date}` : "";
+    const q = currentDateParam() ? `?date=${currentDateParam()}` : "";
     try {
       const [playerData, logsData, gameData] = await Promise.all([
         api(`/api/${state.sport}/player/${row.player_id}${q}`).catch(() => null),
@@ -1121,7 +1171,8 @@
     } else {
       $("player-view").hidden = true;
       $("board-view").hidden = false;
-      if (!state.rows.length || route.sport !== state.sport) await loadBoard();
+      const stale = !state.date || state.date < todayEt();
+      if (stale || !state.rows.length || route.sport !== state.sport) await loadBoard();
     }
   }
 

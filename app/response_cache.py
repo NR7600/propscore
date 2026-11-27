@@ -14,7 +14,7 @@ _LOCK = threading.Lock()
 # cache_key -> (token, etag, body_bytes)
 _CACHE: dict[str, tuple[str, str, bytes]] = {}
 _MAX_ENTRIES = 256
-CACHE_CONTROL = "public, max-age=60, stale-while-revalidate=300"
+CACHE_CONTROL = "no-store"
 
 
 def _etag_for(body: bytes) -> str:

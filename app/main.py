@@ -23,7 +23,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from app.board_store import STORE, available_dates, resolve_date, today_et
+from app.board_store import STORE, available_dates, prune_old_boards, resolve_date, today_et
 from app.response_cache import json_response
 from propscore.odds import odds_status
 
@@ -64,7 +64,7 @@ def _board_date(sport: str, date: Optional[str]) -> str:
         if _refresh_state.get("running"):
             raise HTTPException(
                 503,
-                "Tonight's board is being generated. Refresh in about a minute.",
+                "Today's slate is being generated. Refresh in about a minute.",
             )
         raise HTTPException(
             404,
@@ -318,6 +318,9 @@ def _run_refresh_sports(
             sport_date = date or build_date_for(sport)
             try:
                 _run_one_sport(sport, sport_date, skip_odds=skip_odds, skip_pbp=skip_pbp)
+                pruned = prune_old_boards(sport)
+                if pruned:
+                    log.info("Pruned old %s boards: %s", sport, ", ".join(pruned))
                 _refresh_state["done"] = list(_refresh_state.get("done") or []) + [sport]
                 log.info("Published %s board (%s)", sport, sport_date)
             except Exception as exc:
@@ -363,6 +366,9 @@ def _scheduler_loop() -> None:
 def on_startup() -> None:
     (ROOT / "output").mkdir(parents=True, exist_ok=True)
     (ROOT / "cache").mkdir(parents=True, exist_ok=True)
+    pruned = prune_old_boards()
+    if pruned:
+        log.info("Pruned old board files on startup: %s", ", ".join(pruned))
     thread = threading.Thread(target=_scheduler_loop, name="propscore-scheduler", daemon=True)
     thread.start()
     # Fresh deploys have no output/: generate any missing today's boards

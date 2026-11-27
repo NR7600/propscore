@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 ET = ZoneInfo("America/New_York")
 ROOT = Path(__file__).resolve().parent.parent
-LOOKAHEAD = {"nfl": 3}
+LOOKAHEAD = {"nfl": 7}
 
 
 def today_et() -> str:
@@ -18,8 +18,8 @@ def today_et() -> str:
 def build_date_for(sport: str, explicit: str | None = None) -> str:
     """Date to build for a sport.
 
-    NBA/NHL use today. NFL looks up to 3 days ahead so a Saturday
-    refresh (or boot) builds Sunday's slate.
+    NBA/NHL use today. NFL looks up to 7 days ahead so a mid-week
+    refresh (or boot) builds the next upcoming slate, never a past week.
     """
     if explicit:
         return explicit

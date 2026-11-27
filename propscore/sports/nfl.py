@@ -42,7 +42,7 @@ MIN_PASS_ATT = 8.0
 MIN_RUSH_ATT = 5.0
 MIN_TARGETS = 3.0
 MIN_RECEPTIONS = 2.0
-LOOKAHEAD_DAYS = 3
+LOOKAHEAD_DAYS = 7
 
 
 def _parse_iso(value: str) -> datetime | None:

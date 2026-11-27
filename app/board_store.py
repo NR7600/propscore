@@ -178,30 +178,80 @@ def today_et() -> str:
     return datetime.now(ET).date().isoformat()
 
 
+_pruned_on: str | None = None
+
+
+def _date_from_board_path(path: Path, sport: str) -> str | None:
+    prefix = f"{sport}_"
+    stem = path.stem
+    if stem.startswith(prefix):
+        return stem[len(prefix):]
+    return None
+
+
+def prune_old_boards(*sports: str) -> list[str]:
+    """Delete board files (json/csv/html) dated before today ET.
+
+    Past slates must never be served, even as a fallback while today
+    is still building.
+    """
+    today = today_et()
+    keys = sports or ("nba", "nhl", "nfl")
+    removed: list[str] = []
+    for sport in keys:
+        for path in list(OUTPUT_DIR.glob(f"{sport}_*.*")):
+            date = _date_from_board_path(path, sport)
+            if not date or date >= today:
+                continue
+            try:
+                path.unlink()
+                removed.append(path.name)
+            except OSError:
+                continue
+    if removed:
+        STORE.drop_past(today)
+        try:
+            from app.response_cache import clear as clear_response_cache
+            clear_response_cache()
+        except Exception:
+            pass
+    return removed
+
+
+def prune_if_new_day() -> list[str]:
+    """Prune at most once per ET day so a long-running process drops yesterday at midnight."""
+    global _pruned_on
+    today = today_et()
+    if _pruned_on == today:
+        return []
+    removed = prune_old_boards()
+    _pruned_on = today
+    return removed
+
+
 def available_dates(sport: str = "nba") -> list[str]:
+    prune_if_new_day()
+    today = today_et()
     dates = []
     for path in OUTPUT_DIR.glob(f"{sport}_*.json"):
         # sport_YYYY-MM-DD.json
-        stem = path.stem
-        prefix = f"{sport}_"
-        if stem.startswith(prefix):
-            dates.append(stem[len(prefix) :])
+        date = _date_from_board_path(path, sport)
+        if date and date >= today:
+            dates.append(date)
     return sorted(dates)
 
 
 def resolve_date(sport: str, date: str | None) -> str | None:
+    """Pick today's slate, or the next upcoming one (NFL). Never a past day."""
     dates = available_dates(sport)
     if not dates:
         return None
-    if date and date in dates:
-        return date
     today = today_et()
+    if date and date >= today and date in dates:
+        return date
     if today in dates:
         return today
-    future = [d for d in dates if d >= today]
-    if future:
-        return future[0]
-    return dates[-1]
+    return dates[0]
 
 
 def _load_file(sport: str, date: str) -> dict[str, Any]:
@@ -216,6 +266,11 @@ class BoardStore:
 
     def __init__(self) -> None:
         self._cache: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
+
+    def drop_past(self, today: str | None = None) -> None:
+        cutoff = today or today_et()
+        for key in [k for k in self._cache if k[1] < cutoff]:
+            self._cache.pop(key, None)
 
     def get(self, sport: str, date: str) -> dict[str, Any]:
         path = OUTPUT_DIR / f"{sport}_{date}.json"
