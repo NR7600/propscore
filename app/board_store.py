@@ -9,6 +9,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from propscore.odds import lines_for_sport, lowest_line, props_for_sport, format_american, prop_full_label
+from propscore.live_status import apply_live_status, cache_tag, open_games, slate_is_complete
 from propscore.ranking import has_perfect_window, windows_from_row, select_display_windows
 
 ET = ZoneInfo("America/New_York")
@@ -131,6 +132,7 @@ GAME_CHIP_FIELDS = (
     "away_abbr",
     "home_id",
     "away_id",
+    "live",
 )
 
 LOG_FIELDS = (
@@ -293,10 +295,14 @@ class BoardStore:
         self._cache[key] = (mtime, data)
         return data
 
+    def live_games(self, sport: str, date: str) -> list[dict[str, Any]]:
+        data = self.get(sport, date)
+        return apply_live_status(sport, date, data.get("games") or [])
+
     def token(self, sport: str, date: str) -> str:
         path = OUTPUT_DIR / f"{sport}_{date}.json"
         mtime = path.stat().st_mtime if path.exists() else 0
-        return f"{sport}:{date}:{mtime}"
+        return f"{sport}:{date}:{mtime}:{cache_tag()}"
 
     def meta(self, sport: str, date: str) -> dict[str, Any]:
         data = self.get(sport, date)
@@ -307,7 +313,7 @@ class BoardStore:
             "generated_at": data.get("generated_at"),
             "stale": bool(data.get("date") and data.get("date") < today_et()),
             "available_dates": available_dates(sport),
-            "games": _slim_games(data.get("games") or []),
+            "games": _slim_games(open_games(apply_live_status(sport, date, data.get("games") or []))),
             "row_count": len(data.get("rows") or []),
             "player_count": len(data.get("players") or {}),
             "formula": (data.get("formula") or {}).get("description"),
@@ -336,7 +342,15 @@ class BoardStore:
     ) -> dict[str, Any]:
         data = self.get(sport, date)
         first_mode = _is_first_tab(tab, stat)
+        games = apply_live_status(sport, date, data.get("games") or [])
+        remaining = open_games(games)
+        open_ids = {str(g.get("event_id") or "") for g in remaining}
+        live_ids = {str(g.get("event_id") or "") for g in remaining if g.get("live")}
         source = (data.get("first_score_rows") or []) if first_mode else (data.get("rows") or [])
+        source = [r for r in source if str(r.get("event_id") or "") in open_ids]
+        # A chip for a game that just ended should not leave the list empty.
+        if game and game not in open_ids:
+            game = ""
         rows = _filter_rows(
             source,
             sport=sport,
@@ -358,6 +372,8 @@ class BoardStore:
         for i, r in enumerate(top):
             item = _compact_row(r)
             item["rank"] = i + 1
+            if str(item.get("event_id") or "") in live_ids:
+                item["live"] = True
             top_out.append(item)
         # Hard cap: every board list is ranks 1-10 only. No "more trends".
         total = len(top_out)
@@ -377,7 +393,8 @@ class BoardStore:
                 if first_mode
                 else _view_label(view, min_l10)
             ),
-            "games": _slim_games(data.get("games") or []),
+            "games": _slim_games(remaining),
+            "slate_complete": slate_is_complete(games),
             "filters": {
                 "stat": stat or "",
                 "game": game or "",
@@ -402,8 +419,8 @@ class BoardStore:
             "rows": slice_,
             "first_score_meta": data.get("first_score_meta") or {},
             "first_mode": first_mode,
-            "games_remaining": _games_remaining(data.get("games") or []),
-            "slate_message": _slate_message(data.get("games") or [], first_mode, len(top_out), sport=sport),
+            "games_remaining": len(remaining),
+            "slate_message": _slate_message(games, first_mode, len(top_out), sport=sport),
         }
 
     def player(self, sport: str, date: str, player_id: str) -> dict[str, Any] | None:
@@ -867,8 +884,10 @@ def _player_featured(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], 
 
 
 def _game_is_final(game: dict[str, Any]) -> bool:
-    status = str(game.get("status") or "").lower()
-    return "final" in status or status in {"post", "completed", "status_final"}
+    if "closed" in game:
+        return bool(game.get("closed"))
+    from propscore.live_status import classify_status
+    return classify_status(game.get("status")).get("closed", False)
 
 
 def _games_remaining(games: list[dict[str, Any]]) -> int:

@@ -1,14 +1,11 @@
-"""Build-date helper: NFL looks ahead to the next game day."""
+"""Build-date helper: pick the current open slate, never a past day."""
 
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 ET = ZoneInfo("America/New_York")
-ROOT = Path(__file__).resolve().parent.parent
-LOOKAHEAD = {"nfl": 7}
 
 
 def today_et() -> str:
@@ -18,17 +15,15 @@ def today_et() -> str:
 def build_date_for(sport: str, explicit: str | None = None) -> str:
     """Date to build for a sport.
 
-    NBA/NHL use today. NFL looks up to 7 days ahead so a mid-week
-    refresh (or boot) builds the next upcoming slate, never a past week.
+    Uses today's ET slate if any game has not yet finished. When every
+    game today is Final (or postponed/canceled), rolls forward: NBA/NHL
+    to the next day that has games, NFL to the next NFL game day.
+    Never returns a date before today.
     """
     if explicit:
         return explicit
-    today = today_et()
-    key = (sport or "").lower()
-    if LOOKAHEAD.get(key, 0) <= 0:
-        return today
-    from .http import HttpClient
-    from .sports.nfl import date_with_games
+    from .live_status import open_slate_date
 
-    client = HttpClient(ROOT / "cache" / "nfl" / "slate_probe")
-    return date_with_games(client, today, lookahead=LOOKAHEAD[key])
+    day = open_slate_date(sport)
+    today = today_et()
+    return day if day >= today else today

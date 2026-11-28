@@ -1,5 +1,5 @@
 /* Da Real Big Homie Props service worker: cache the app shell only. */
-const CACHE = "bhp-shell-v14";
+const CACHE = "bhp-shell-v15";
 const SHELL = [
   "/",
   "/styles.css",

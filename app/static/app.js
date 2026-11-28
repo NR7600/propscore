@@ -48,7 +48,13 @@
   function currentDateParam() {
     return state.date && state.date >= todayEt() ? state.date : "";
   }
-  function showLoadingSlate() {
+  function nextSlateCopy(iso) {
+    if (!iso) return "Loading today's slate…";
+    const label = formatSlateDate(iso) || iso;
+    if (iso > todayEt()) return `Next slate: ${label}. Loading…`;
+    return "Loading today's slate…";
+  }
+  function showLoadingSlate(nextSlate) {
     state.games = [];
     state.top = [];
     state.rows = [];
@@ -56,18 +62,27 @@
     lastGamesKey = "";
     $("games").innerHTML = "";
     $("list").innerHTML = "";
-    $("date-line").textContent = "Loading today's slate…";
+    const copy = nextSlateCopy(nextSlate);
+    $("date-line").textContent = nextSlate && nextSlate > todayEt()
+      ? `Next slate: ${formatSlateDate(nextSlate) || nextSlate}`
+      : "Loading today's slate…";
     $("count").textContent = "";
     $("view-note").textContent = "";
     $("empty").hidden = false;
-    $("empty").textContent = "Loading today's slate…";
+    $("empty").textContent = copy;
     showSkeletons();
   }
-  function scheduleSlateRetry() {
+  function scheduleSlateRetry(nextSlate) {
     clearTimeout(slateRetry);
     slateRetry = setTimeout(() => {
-      if (!$("board-view").hidden) loadBoard();
+      if (!$("board-view").hidden) loadBoard({ nextSlate });
     }, 5000);
+  }
+  function scheduleStatusPoll() {
+    clearTimeout(state.statusPoll);
+    state.statusPoll = setTimeout(() => {
+      if (!$("board-view").hidden && !state.loading) loadBoard({ refresh: true });
+    }, 120000);
   }
 
   function pct(rate) {
@@ -138,12 +153,20 @@
     const res = await fetch(path, { headers: { Accept: "application/json" }, signal });
     if (!res.ok) {
       let detail = res.statusText;
+      let errNext = "";
       try {
         const body = await res.json();
-        detail = body.detail || body.message || detail;
+        const d = body.detail;
+        if (d && typeof d === "object") {
+          detail = d.message || d.detail || detail;
+          errNext = d.next_slate || "";
+        } else {
+          detail = d || body.message || detail;
+        }
       } catch {}
       const err = new Error(detail);
       err.status = res.status;
+      if (typeof errNext !== "undefined" && errNext) err.nextSlate = errNext;
       throw err;
     }
     return res.json();
@@ -179,7 +202,10 @@
     state.date = data.date;
     state.total = data.total;
     state.totalPages = data.total_pages;
-    if (data.games && data.games.length) state.games = data.games;
+    if (Array.isArray(data.games)) state.games = data.games;
+    if (state.game && !(state.games || []).some((g) => String(g.event_id) === String(state.game))) {
+      state.game = "";
+    }
     state.props = data.props || state.props;
     if (!append) {
       state.top = data.top || [];
@@ -192,7 +218,7 @@
     $("board-view").classList.toggle("first-mode", first);
     const slate = formatSlateDate(data.date);
     const upcoming = data.date && data.date > todayEt();
-    const label = slate ? (upcoming ? `${slate} slate` : slate) : "Today";
+    const label = slate ? (upcoming ? `Next slate: ${slate}` : slate) : "Today";
     $("date-line").textContent = `${label} • Updated Daily • Ranked By Trend Strength`;
     $("view-note").textContent = data.view_label || "";
     const firstLabel = meta.title;
@@ -215,42 +241,57 @@
     $("status").textContent = "";
   }
 
-  async function loadBoard({ append } = {}) {
+  async function loadBoard({ append, refresh, nextSlate } = {}) {
     if (inflight && !append) inflight.abort();
     const controller = new AbortController();
     inflight = controller;
     if (!append) state.page = 1;
     const path = boardQuery(state.page);
-    const cached = !append ? boardCache.get(path) : null;
-    const liveCached = cached && isLiveSlate(cached) ? cached : null;
+    const cached = (!append && !refresh) ? boardCache.get(path) : null;
+    const fresh = cached && cached._cachedAt && (Date.now() - cached._cachedAt) < 90 * 1000;
+    const liveCached = fresh && isLiveSlate(cached) ? cached : null;
     if (liveCached) {
       applyBoard(liveCached, { append: false });
-    } else if (!append) {
-      showLoadingSlate();
+    } else if (!append && !refresh) {
+      showLoadingSlate(nextSlate);
     }
     if (!append) $("board-view").classList.add("is-loading");
     else $("status").textContent = "Loading more…";
     state.loading = true;
     try {
       const data = await api(path, { signal: controller.signal });
+      if (data && data.slate_pending) {
+        throw Object.assign(new Error(data.slate_message || nextSlateCopy(data.next_slate || data.date)), {
+          status: 503,
+          nextSlate: data.next_slate || data.date,
+        });
+      }
       if (!isLiveSlate(data)) {
         throw Object.assign(new Error("Today's slate is being generated."), { status: 503 });
       }
       clearTimeout(slateRetry);
       if (!append) {
+        data._cachedAt = Date.now();
         boardCache.set(path, data);
         if (boardCache.size > 40) boardCache.delete(boardCache.keys().next().value);
       }
+      const hadGame = state.game;
       applyBoard(data, { append });
+      if (hadGame && !state.game && !append) {
+        loadBoard({ refresh: true });
+        return;
+      }
+      scheduleStatusPoll();
     } catch (err) {
       if (err.name === "AbortError") return;
       if (!append) {
-        showLoadingSlate();
+        const upcoming = err.nextSlate || nextSlate;
+        showLoadingSlate(upcoming);
         const building = err.status === 503 || err.status === 404;
         $("empty").textContent = building
-          ? "Loading today's slate…"
+          ? nextSlateCopy(upcoming)
           : (err.message || "Could not load today's slate.");
-        if (building) scheduleSlateRetry();
+        if (building) scheduleSlateRetry(upcoming);
         $("status").textContent = "";
       } else {
         $("status").textContent = err.message || "Could not load the board.";
@@ -265,14 +306,15 @@
 
   function renderGames() {
     const host = $("games");
-    const key = (state.games || []).map((g) => g.event_id).join(",") + "|" + (state.game || "");
+    const key = (state.games || []).map((g) => `${g.event_id}:${g.live ? "1" : "0"}`).join(",") + "|" + (state.game || "");
     if (key === lastGamesKey && host.children.length) return;
     lastGamesKey = key;
     const chips = [`<span class="smart-label">Games:</span>`,`<button type="button" class="game-chip ${state.game ? "" : "on"}" data-game="">All games</button>`];
     for (const g of state.games) {
       const label = g.label || `${g.away_abbr} @ ${g.home_abbr}`;
       const on = state.game === String(g.event_id) ? "on" : "";
-      chips.push(`<button type="button" class="game-chip ${on}" data-game="${g.event_id}">${label}</button>`);
+      const live = g.live ? `<span class="badge-live">LIVE</span>` : "";
+      chips.push(`<button type="button" class="game-chip ${on}" data-game="${g.event_id}">${escapeHtml(label)}${live}</button>`);
     }
     host.innerHTML = chips.join("");
   }
@@ -412,12 +454,13 @@
     const sideCls = first ? "first" : (over ? "" : "under");
     const sideTxt = first ? (row.prop_label || "1st") : (over ? "Over" : "Under");
     const outBadge = isOutStatus(row.injury_status) ? `<span class="badge-out">OUT</span>` : "";
+    const liveBadge = row.live ? `<span class="badge-live">LIVE</span>` : "";
     return `<article class="card ${featured ? "top-card" : ""}" data-player="${row.player_id}" data-prop="${row.prop}" data-side="${row.side}" data-line="${row.line}" data-event="${row.event_id || ""}">
       <div class="card-top">
         <div class="rank-wrap">
           <div class="rank"><small>RANK</small><b>${rank}</b></div>
           <div class="who">
-            <div class="name">${escapeHtml(row.player)}${outBadge}</div>
+            <div class="name">${escapeHtml(row.player)}${outBadge}${liveBadge}</div>
             <div class="meta">${escapeHtml(row.team ? row.team + " · " : "")}${escapeHtml(row.game || matchupText(row))}${row.game_time_et ? " · " + escapeHtml(row.game_time_et) : ""}${row.position ? " · " + escapeHtml(row.position) : ""}</div>
           </div>
         </div>

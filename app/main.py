@@ -26,6 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from app.board_store import STORE, available_dates, prune_old_boards, resolve_date, today_et
 from app.response_cache import json_response
 from propscore.odds import odds_status
+from propscore.live_status import apply_live_status, next_slate_date, open_games, open_slate_date
 
 ET = ZoneInfo("America/New_York")
 ROOT = Path(__file__).resolve().parent.parent
@@ -58,14 +59,102 @@ def _sport_or_404(sport: str) -> str:
     return key
 
 
+def _label_date(iso: str) -> str:
+    try:
+        day = datetime.strptime(iso, "%Y-%m-%d")
+    except ValueError:
+        return iso
+    return day.strftime("%a, %b ") + str(day.day)
+
+
+def _boot_skip_odds() -> bool:
+    on_render = bool(os.environ.get("RENDER"))
+    fetch_on_boot = os.environ.get("ODDS_FETCH_ON_BOOT", "").strip().lower() in {"1", "true", "yes"}
+    return on_render and not fetch_on_boot
+
+
+def _skip_odds_for(date: str, explicit: bool = False) -> bool:
+    # Future slates never spend the daily Odds API budget; today's 5 AM
+    # scheduled refresh still fetches (subject to the cap).
+    return bool(explicit or (date and date > today_et()))
+
+
+def _ensure_board(sport: str, date: str, skip_odds: bool = True) -> None:
+    """Build a missing slate in the background. Future dates skip The Odds API."""
+    if not date or date < today_et() or date in available_dates(sport):
+        return
+    skip = _skip_odds_for(date, explicit=skip_odds)
+    if _refresh_state.get("running"):
+        pending = _refresh_state.get("pending") or {}
+        sports = list(dict.fromkeys(list(pending.get("sports") or []) + [sport]))
+        pending_date = pending.get("date")
+        merged_date = date if not pending_date or pending_date == date else None
+        _refresh_state["pending"] = {
+            "sports": sports,
+            "date": merged_date,
+            "skip_odds": bool(pending.get("skip_odds") or skip),
+            "skip_pbp": False,
+        }
+        log.info("Queued board build for %s %s", sport, date)
+        return
+    threading.Thread(
+        target=_run_refresh_sports,
+        args=([sport], date, skip, False),
+        daemon=True,
+        name=f"propscore-build-{sport}-{date}",
+    ).start()
+    log.info("Started background board build for %s %s (skip_odds=%s)", sport, date, skip)
+
+
+def _pending_slate_error(date: str) -> HTTPException:
+    today = today_et()
+    if date and date > today:
+        message = f"Next slate: {_label_date(date)}. Loading…"
+    else:
+        message = "Today's slate is being generated. Refresh in about a minute."
+    return HTTPException(503, {"message": message, "next_slate": date or today})
+
+
 def _board_date(sport: str, date: Optional[str]) -> str:
+    """Return an open (not fully finished) slate date, never a past day.
+
+    When today's games are all Final/Postponed/Canceled, roll forward to the
+    next game day. If that board is not on disk yet, start a background
+    build (without odds when the date is in the future) and return 503.
+    """
     resolved = resolve_date(sport, date)
+    today = today_et()
+    seen: set[str] = set()
+    while resolved and resolved not in seen:
+        seen.add(resolved)
+        try:
+            stored = STORE.get(sport, resolved).get("games") or []
+        except FileNotFoundError:
+            break
+        games = apply_live_status(sport, resolved, stored)
+        if open_games(games):
+            return resolved
+        if not games:
+            break
+        nxt = next_slate_date(sport, resolved)
+        if not nxt or nxt <= resolved or nxt < today:
+            break
+        if nxt in available_dates(sport):
+            resolved = nxt
+            continue
+        _ensure_board(sport, nxt, skip_odds=True)
+        raise _pending_slate_error(nxt)
+    if not resolved:
+        target = open_slate_date(sport)
+        if target < today:
+            target = today
+        if target not in available_dates(sport):
+            _ensure_board(sport, target, skip_odds=_boot_skip_odds() or target > today)
+            raise _pending_slate_error(target)
+        resolved = target
     if not resolved:
         if _refresh_state.get("running"):
-            raise HTTPException(
-                503,
-                "Today's slate is being generated. Refresh in about a minute.",
-            )
+            raise _pending_slate_error(today)
         raise HTTPException(
             404,
             f"No generated {sport} board yet. Run: python3 run.py {sport}",
@@ -316,8 +405,9 @@ def _run_refresh_sports(
         for sport in sports:
             _refresh_state["current"] = sport
             sport_date = date or build_date_for(sport)
+            sport_skip_odds = skip_odds or _skip_odds_for(sport_date)
             try:
-                _run_one_sport(sport, sport_date, skip_odds=skip_odds, skip_pbp=skip_pbp)
+                _run_one_sport(sport, sport_date, skip_odds=sport_skip_odds, skip_pbp=skip_pbp)
                 pruned = prune_old_boards(sport)
                 if pruned:
                     log.info("Pruned old %s boards: %s", sport, ", ".join(pruned))
@@ -343,7 +433,12 @@ def _run_refresh_sports(
         if pending:
             threading.Thread(
                 target=_run_refresh_sports,
-                args=(pending["sports"], pending.get("date"), False, False),
+                args=(
+                    pending["sports"],
+                    pending.get("date"),
+                    bool(pending.get("skip_odds")),
+                    bool(pending.get("skip_pbp")),
+                ),
                 daemon=True,
             ).start()
 
